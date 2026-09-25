@@ -1,6 +1,7 @@
 // Tests sans compte Google : MIME, connexion OAuth (jusqu'au serveur de Google) et visionneuse.
 #include "googleauth.h"
 #include "maillistdelegate.h"
+#include "sidebar.h"
 #include "mainwindow.h"
 #include "messageview.h"
 #include "mime.h"
@@ -9,10 +10,12 @@
 
 #include <QBuffer>
 #include <QDesktopServices>
+#include <QIcon>
 #include <QImage>
 #include <QJsonArray>
 #include <QListWidget>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
@@ -404,12 +407,89 @@ private slots:
         }
         Theme::apply("system");
     }
+    void sidebar()
+    {
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
+        QJsonArray labels;
+        auto label = [&](const char *id, const char *name, const char *color) {
+            QJsonObject l{{"id", id}, {"name", name}, {"type", "user"}};
+            if (*color)
+                l.insert("color", QJsonObject{{"backgroundColor", color}, {"textColor", "#ffffff"}});
+            labels.append(l);
+        };
+        label("Label_1", "Factures", "#fb4c2f");
+        label("Label_2", "Voyages", "#16a766");
+        label("Label_3", "Voyages/Japon 2026", "#4a86e8");
+        label("Label_4", "Association", "");
+
+        for (const QString &theme : {QString("light"), QString("dark")}) {
+            QSettings("gdesk", "gdesk").setValue("theme", theme);
+            MainWindow win;
+            win.resize(1100, 860);
+            qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+            win.populateFolders(QJsonObject{{"labels", labels}});
+            win.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&win));
+
+            QTreeWidget *folders = nullptr;
+            for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+                if (qobject_cast<FolderDelegate *>(t->itemDelegate()))
+                    folders = t;
+            QVERIFY(folders);
+
+            // 4 sections : Messagerie, Catégories, Plus, Libellés
+            QStringList sections;
+            QHash<QString, QTreeWidgetItem *> byId;
+            QTreeWidgetItemIterator it(folders);
+            for (; *it; ++it) {
+                if (!(*it)->data(0, FolderRoles::SectionKey).toString().isEmpty())
+                    sections << (*it)->data(0, FolderRoles::Name).toString();
+                else
+                    byId.insert((*it)->data(0, FolderRoles::Id).toString(), *it);
+            }
+            QCOMPARE(sections, (QStringList{"Messagerie", "Catégories", "Plus", "Libellés"}));
+            for (const char *id : {"INBOX", "STARRED", "IMPORTANT", "SENT", "DRAFT", "CATEGORY_PERSONAL",
+                                   "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS",
+                                   "", "SPAM", "TRASH", "Label_1", "Label_3"})
+                QVERIFY2(byId.contains(id), id);
+            QCOMPARE(byId["Label_3"]->parent(), byId["Label_2"]); // sous-libellé
+            QCOMPARE(byId["Label_1"]->data(0, FolderRoles::Color).value<QColor>(), QColor("#fb4c2f"));
+            QCOMPARE(folders->currentItem(), byId["INBOX"]);
+
+            // Compteurs d'exemple pour la capture
+            byId["INBOX"]->setData(0, FolderRoles::Count, 12);
+            byId["CATEGORY_SOCIAL"]->setData(0, FolderRoles::Count, 3);
+            byId["CATEGORY_PROMOTIONS"]->setData(0, FolderRoles::Count, 128);
+            byId["DRAFT"]->setData(0, FolderRoles::Count, 2);
+            byId["Label_1"]->setData(0, FolderRoles::Count, 1);
+            QTest::qWait(50);
+            if (!out.isEmpty())
+                win.grab().save(QString("%1/sidebar-%2.png").arg(out, theme));
+
+            // Clic sur l'en-tête « Plus » : section repliée et mémorisée, sélection conservée
+            QTreeWidgetItem *more = byId[""]->parent();
+            QTest::mouseClick(folders->viewport(), Qt::LeftButton, {}, folders->visualItemRect(more).center());
+            QVERIFY(!more->isExpanded());
+            QCOMPARE(QSettings("gdesk", "gdesk").value("sidebar_collapsed").toStringList(), QStringList{"more"});
+            QCOMPARE(folders->currentItem(), byId["INBOX"]);
+            QTest::mouseClick(folders->viewport(), Qt::LeftButton, {}, folders->visualItemRect(more).center());
+            QVERIFY(more->isExpanded());
+            win.close();
+        }
+        Theme::apply("system");
+    }
 };
 
 int main(int argc, char *argv[])
 {
     MessageView::registerScheme();
     QApplication app(argc, argv);
+    // Sans écran (QT_QPA_PLATFORM=offscreen), Qt ne cherche pas les icônes du système
+    QIcon::setThemeSearchPaths(QIcon::themeSearchPaths() << "/usr/share/icons");
+    if (QIcon::themeName().isEmpty())
+        QIcon::setThemeName("breeze");
 
     // Traductions de Qt (boutons Oui/Non, Annuler, sélecteur de fichiers…) dans la langue du système
     QTranslator qtTranslator;

@@ -18,6 +18,7 @@ class QLineEdit;
 class QNetworkAccessManager;
 class QPushButton;
 class QSplitter;
+class AccountChip;
 class MailListDelegate;
 class QStackedWidget;
 class QTimer;
@@ -35,6 +36,7 @@ public:
     void bringToFront();
     bool hasTray() const { return m_tray != nullptr; }
     void applySettings(); // relit les réglages et les applique à la fenêtre
+    void populateFolders(const QJsonObject &labels); // barre latérale à partir de labels.list
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -119,7 +121,8 @@ private:
     QTreeWidget *m_list;
     MessageView *m_view;
     QLineEdit *m_search;
-    QToolButton *m_accountButton;
+    AccountChip *m_accountChip;
+    QMenu *m_accountMenu;
 
     QAction *m_actNew, *m_actReply, *m_actReplyAll, *m_actForward;
     QAction *m_actArchive, *m_actDelete, *m_actRestore, *m_actSpam, *m_actRead, *m_actStar, *m_actRefresh;

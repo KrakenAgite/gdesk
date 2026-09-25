@@ -21,6 +21,7 @@ add_executable(gdesk
     src/settingsdialog.cpp src/settingsdialog.h
     src/theme.cpp src/theme.h
     src/maillistdelegate.cpp src/maillistdelegate.h
+    src/sidebar.cpp src/sidebar.h
     data/gdesk.qrc)
 target_compile_definitions(gdesk PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
 target_link_libraries(gdesk PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::DBus
@@ -53,7 +54,7 @@ if(GDESK_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(gdesk-tests tests/tests.cpp
         src/mime.cpp src/googleauth.cpp src/gmailapi.cpp src/messageview.cpp
-        src/settingsdialog.cpp src/theme.cpp src/mainwindow.cpp src/composer.cpp src/setupdialog.cpp src/maillistdelegate.cpp
+        src/settingsdialog.cpp src/theme.cpp src/mainwindow.cpp src/composer.cpp src/setupdialog.cpp src/maillistdelegate.cpp src/sidebar.cpp
         data/gdesk.qrc)
     target_include_directories(gdesk-tests PRIVATE src)
     target_compile_definitions(gdesk-tests PRIVATE GDESK_VERSION="${PROJECT_VERSION}")

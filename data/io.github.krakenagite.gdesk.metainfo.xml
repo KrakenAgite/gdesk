@@ -51,6 +51,7 @@
     <release version="2.2.0" date="2026-09-25">
       <description>
         <p>Messages are now shown as cards: sender in bold with the date opposite, subject below and the beginning of the message when there is room.</p>
+        <p>Redesigned sidebar: compose button, collapsible sections (mail, Gmail categories, more, labels), colored icons, unread badges and account menu.</p>
         <p>Fix: the "preview on the right" layout stayed below the list for users upgrading from 2.0.</p>
       </description>
     </release>

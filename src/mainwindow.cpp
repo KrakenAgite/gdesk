@@ -5,6 +5,7 @@
 #include "messageview.h"
 #include "settingsdialog.h"
 #include "setupdialog.h"
+#include "sidebar.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -39,29 +40,39 @@
 #include <memory>
 
 namespace {
-// Données des dossiers (celles de la liste des messages sont dans MailRoles)
-enum FolderRoles { FolderIdRole = Qt::UserRole, NameRole = Qt::UserRole + 2 };
-
-struct SystemLabel {
-    const char *id, *name, *icon;
+struct FolderDef {
+    const char *id, *name, *icon, *color; // icône : data/sidebar/<icon>.svg ; couleur vide : couleur du texte
 };
-const SystemLabel systemLabels[] = {
-    {"INBOX", "Boîte de réception", "mail-folder-inbox"},
-    {"STARRED", "Suivis", "rating"},
-    {"IMPORTANT", "Importants", "mail-mark-important"},
-    {"SENT", "Messages envoyés", "mail-folder-sent"},
-    {"DRAFT", "Brouillons", "document-edit"},
-    {"", "Tous les messages", "mail-folder-outbox"},
-    {"SPAM", "Spam", "mail-mark-junk"},
-    {"TRASH", "Corbeille", "user-trash"},
+struct SectionDef {
+    const char *key, *title;
+    QList<FolderDef> folders;
 };
-const SystemLabel categories[] = {
-    {"CATEGORY_PERSONAL", "Principale", "mail-folder-inbox"},
-    {"CATEGORY_SOCIAL", "Réseaux sociaux", "system-users"},
-    {"CATEGORY_PROMOTIONS", "Promotions", "tag"},
-    {"CATEGORY_UPDATES", "Notifications", "dialog-information"},
-    {"CATEGORY_FORUMS", "Forums", "im-user"},
-};
+// Barre latérale : sections repliables et leurs dossiers (couleurs inspirées de Gmail)
+const QList<SectionDef> &sidebarSections()
+{
+    static const QList<SectionDef> sections = {
+        {"mail", "Messagerie", {
+            {"INBOX", "Boîte de réception", "inbox", ""},
+            {"STARRED", "Suivis", "star", "#f4b400"},
+            {"IMPORTANT", "Importants", "important", "#e8a100"},
+            {"SENT", "Envoyés", "sent", ""},
+            {"DRAFT", "Brouillons", "draft", ""},
+        }},
+        {"categories", "Catégories", {
+            {"CATEGORY_PERSONAL", "Principale", "inbox", "#d93025"},
+            {"CATEGORY_SOCIAL", "Réseaux sociaux", "social", "#1a73e8"},
+            {"CATEGORY_PROMOTIONS", "Promotions", "promotions", "#188038"},
+            {"CATEGORY_UPDATES", "Notifications", "updates", "#e37400"},
+            {"CATEGORY_FORUMS", "Forums", "forums", "#9334e6"},
+        }},
+        {"more", "Plus", {
+            {"", "Tous les messages", "allmail", ""},
+            {"SPAM", "Spam", "spam", ""},
+            {"TRASH", "Corbeille", "trash", ""},
+        }},
+    };
+    return sections;
+}
 } // namespace
 
 MainWindow::MainWindow()
@@ -221,8 +232,6 @@ QWidget *MainWindow::buildMailPage()
     auto *bar = new QToolBar;
     bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     bar->setIconSize(QSize(20, 20));
-    bar->addAction(m_actNew);
-    bar->addSeparator();
     for (QAction *a : {m_actReply, m_actReplyAll, m_actForward})
         bar->addAction(a);
     bar->addSeparator();
@@ -261,24 +270,62 @@ QWidget *MainWindow::buildMailPage()
     addAction(focusSearch);
     bar->addWidget(m_search);
 
-    m_accountButton = new QToolButton;
-    m_accountButton->setIcon(QIcon::fromTheme("user-identity"));
-    m_accountButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    m_accountButton->setPopupMode(QToolButton::InstantPopup);
-    m_accountButton->setMenu(buildAccountMenu());
-    bar->addWidget(m_accountButton);
     v->addWidget(bar);
 
-    // --- dossiers ---
+    // --- barre latérale : nouveau message, dossiers, compte ---
+    auto *sidebar = new QWidget;
+    sidebar->setMinimumWidth(200);
+    auto *sideLayout = new QVBoxLayout(sidebar);
+    sideLayout->setContentsMargins(0, 10, 0, 6);
+    sideLayout->setSpacing(6);
+    auto *composeBtn = new ComposeButton;
+    connect(composeBtn, &QAbstractButton::clicked, this, [this] { compose(Composer::New); });
+    auto *composeRow = new QHBoxLayout;
+    composeRow->setContentsMargins(10, 0, 10, 4);
+    composeRow->addWidget(composeBtn);
+    composeRow->addStretch(1);
+    sideLayout->addLayout(composeRow);
+
     m_folders = new QTreeWidget;
     m_folders->setHeaderHidden(true);
-    m_folders->setIconSize(QSize(18, 18));
-    m_folders->setRootIsDecorated(true);
-    m_folders->setMinimumWidth(170);
+    m_folders->setRootIsDecorated(false);
+    m_folders->setIndentation(0); // l'indentation des sous-libellés est dessinée par le délégué
+    m_folders->setItemsExpandable(true);
+    m_folders->setExpandsOnDoubleClick(false);
+    m_folders->setFrameShape(QFrame::NoFrame);
+    m_folders->setMouseTracking(true);
+    m_folders->setFocusPolicy(Qt::StrongFocus);
+    m_folders->viewport()->setBackgroundRole(QPalette::Window);
+    m_folders->setItemDelegate(new FolderDelegate(m_folders));
+    m_folders->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(m_folders, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *cur) {
-        if (cur && cur->data(0, FolderIdRole).isValid())
+        if (cur && cur->data(0, FolderRoles::SectionKey).toString().isEmpty() && cur->data(0, FolderRoles::Id).isValid())
             onFolderChanged();
     });
+    connect(m_folders, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item) {
+        const QString key = item->data(0, FolderRoles::SectionKey).toString();
+        if (key.isEmpty())
+            return;
+        item->setExpanded(!item->isExpanded()); // clic sur un en-tête : replier / déplier
+        QStringList collapsed = m_settings.value("sidebar_collapsed").toStringList();
+        collapsed.removeAll(key);
+        if (!item->isExpanded())
+            collapsed << key;
+        m_settings.setValue("sidebar_collapsed", collapsed);
+        if (QTreeWidgetItem *cur = m_folderItems.value(m_currentLabel)) { // la sélection reste sur le dossier
+            QSignalBlocker b(m_folders);
+            m_folders->setCurrentItem(cur);
+        }
+    });
+    sideLayout->addWidget(m_folders, 1);
+
+    m_accountChip = new AccountChip;
+    m_accountMenu = buildAccountMenu();
+    connect(m_accountChip, &QAbstractButton::clicked, this, [this] {
+        const QSize size = m_accountMenu->sizeHint();
+        m_accountMenu->popup(m_accountChip->mapToGlobal(QPoint(8, -size.height())));
+    });
+    sideLayout->addWidget(m_accountChip);
 
     // --- liste ---
     m_list = new QTreeWidget;
@@ -336,10 +383,10 @@ QWidget *MainWindow::buildMailPage()
     m_rightSplitter->setChildrenCollapsible(false);
 
     m_splitter = new QSplitter(Qt::Horizontal);
-    m_splitter->addWidget(m_folders);
+    m_splitter->addWidget(sidebar);
     m_splitter->addWidget(m_rightSplitter);
     m_splitter->setStretchFactor(1, 1);
-    m_splitter->setSizes({220, 1080});
+    m_splitter->setSizes({250, 1050});
     if (m_settings.contains("splitter"))
         m_splitter->restoreState(m_settings.value("splitter").toByteArray());
     v->addWidget(m_splitter, 1);
@@ -558,7 +605,7 @@ void MainWindow::onLoggedIn()
             return;
         }
         m_email = profile.value("emailAddress").toString();
-        m_accountButton->setText(m_email);
+        m_accountChip->setEmail(m_email);
         m_pages->setCurrentIndex(1);
         m_unreadSeeded = false;
         m_knownUnread.clear();
@@ -584,6 +631,7 @@ void MainWindow::clearMailbox()
 {
     m_pollTimer->stop();
     m_email.clear();
+    m_accountChip->setEmail({});
     ++m_generation;
     m_list->clear();
     m_rows.clear();
@@ -617,58 +665,77 @@ void MainWindow::loadLabels()
             showError("Impossible de charger les dossiers", err);
             return;
         }
+        populateFolders(obj);
+    });
+}
+
+void MainWindow::populateFolders(const QJsonObject &obj)
+{
+    {
         QSignalBlocker block(m_folders);
         m_folders->clear();
         m_folderItems.clear();
+        const QStringList collapsed = m_settings.value("sidebar_collapsed").toStringList();
 
-        auto addItem = [this](QTreeWidgetItem *parent, const QString &id, const QString &name, const QIcon &icon) {
-            auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_folders);
-            item->setText(0, name);
-            item->setIcon(0, icon);
-            item->setData(0, FolderIdRole, id);
-            item->setData(0, NameRole, name);
+        auto addSection = [this, &collapsed](const QString &key, const QString &title) {
+            auto *item = new QTreeWidgetItem(m_folders);
+            item->setData(0, FolderRoles::SectionKey, key);
+            item->setData(0, FolderRoles::Name, title);
+            item->setFlags(Qt::ItemIsEnabled); // en-tête : cliquable mais pas sélectionnable
+            item->setExpanded(!collapsed.contains(key));
+            return item;
+        };
+        auto addFolder = [this](QTreeWidgetItem *parent, const QString &id, const QString &name, const QString &icon,
+                                const QColor &color) {
+            auto *item = new QTreeWidgetItem(parent);
+            item->setData(0, FolderRoles::Id, id);
+            item->setData(0, FolderRoles::Name, name);
+            item->setIcon(0, QIcon(":/sidebar/" + icon + ".svg")); // icônes au trait fournies avec G-Desk
+            if (color.isValid())
+                item->setData(0, FolderRoles::Color, color);
+            item->setToolTip(0, name);
             m_folderItems.insert(id, item);
             return item;
         };
-        for (const SystemLabel &l : systemLabels)
-            addItem(nullptr, l.id, l.name, QIcon::fromTheme(l.icon, QIcon::fromTheme("folder")));
 
-        auto *catRoot = new QTreeWidgetItem(m_folders, {"Catégories"});
-        catRoot->setIcon(0, QIcon::fromTheme("folder-tag", QIcon::fromTheme("folder")));
-        catRoot->setFlags(Qt::ItemIsEnabled);
-        for (const SystemLabel &l : categories)
-            addItem(catRoot, l.id, l.name, QIcon::fromTheme(l.icon, QIcon::fromTheme("folder")));
+        for (const SectionDef &section : sidebarSections()) {
+            QTreeWidgetItem *header = addSection(section.key, section.title);
+            for (const FolderDef &f : section.folders)
+                addFolder(header, f.id, f.name, f.icon, QColor(f.color));
+            header->setExpanded(!collapsed.contains(section.key)); // après ajout des enfants
+        }
 
-        // Libellés personnels, avec sous-libellés « Parent/Enfant »
-        QList<QPair<QString, QString>> userLabels;
+        // Libellés personnels (avec leur couleur Gmail) et sous-libellés « Parent/Enfant »
+        struct UserLabel { QString path, id; QColor color; };
+        QList<UserLabel> userLabels;
         for (const QJsonValue &v : obj.value("labels").toArray()) {
             const QJsonObject l = v.toObject();
             if (l.value("type").toString() == "user")
-                userLabels.append({l.value("name").toString(), l.value("id").toString()});
+                userLabels.append({l.value("name").toString(), l.value("id").toString(),
+                                   QColor(l.value("color").toObject().value("backgroundColor").toString())});
         }
-        std::sort(userLabels.begin(), userLabels.end(), [](const auto &a, const auto &b) {
-            return QString::localeAwareCompare(a.first, b.first) < 0;
+        std::sort(userLabels.begin(), userLabels.end(), [](const UserLabel &a, const UserLabel &b) {
+            return QString::localeAwareCompare(a.path, b.path) < 0;
         });
         if (!userLabels.isEmpty()) {
-            auto *root = new QTreeWidgetItem(m_folders, {"Libellés"});
-            root->setIcon(0, QIcon::fromTheme("tag", QIcon::fromTheme("folder")));
-            root->setFlags(Qt::ItemIsEnabled);
+            QTreeWidgetItem *root = addSection("labels", "Libellés");
             QHash<QString, QTreeWidgetItem *> byPath;
-            for (const auto &[path, id] : userLabels) {
-                const QString parentPath = path.section('/', 0, -2);
-                QTreeWidgetItem *parent = byPath.value(parentPath, root);
-                byPath.insert(path, addItem(parent, id, path.section('/', -1), QIcon::fromTheme("tag")));
+            for (const UserLabel &l : userLabels) {
+                QTreeWidgetItem *parent = byPath.value(l.path.section('/', 0, -2), root);
+                byPath.insert(l.path, addFolder(parent, l.id, l.path.section('/', -1), "label", l.color));
+                parent->setExpanded(parent != root || !collapsed.contains("labels"));
             }
-            root->setExpanded(true);
+            root->setExpanded(!collapsed.contains("labels"));
         }
 
         QTreeWidgetItem *current = m_folderItems.value(m_currentLabel, m_folderItems.value("INBOX"));
         m_folders->setCurrentItem(current);
-        block.unblock();
-        refreshCounts();
-        if (m_list->topLevelItemCount() == 0)
-            onFolderChanged();
-    });
+    }
+    if (m_email.isEmpty())
+        return; // aperçu hors connexion (tests)
+    refreshCounts();
+    if (m_list->topLevelItemCount() == 0)
+        onFolderChanged();
 }
 
 void MainWindow::scheduleCountsRefresh()
@@ -687,11 +754,7 @@ void MainWindow::refreshCounts()
             if (!err.isEmpty() || !item)
                 return;
             const int count = (id == "DRAFT" ? l.value("messagesTotal") : l.value("messagesUnread")).toInt();
-            const QString name = item->data(0, NameRole).toString();
-            item->setText(0, count > 0 ? QString("%1 (%2)").arg(name).arg(count) : name);
-            QFont f = item->font(0);
-            f.setBold(count > 0 && id != "DRAFT");
-            item->setFont(0, f);
+            item->setData(0, FolderRoles::Count, count);
             if (id == "INBOX")
                 setUnread(count);
         });
@@ -703,7 +766,7 @@ void MainWindow::onFolderChanged()
     QTreeWidgetItem *item = m_folders->currentItem();
     if (!item)
         return;
-    m_currentLabel = item->data(0, FolderIdRole).toString();
+    m_currentLabel = item->data(0, FolderRoles::Id).toString();
     m_query.clear();
     {
         QSignalBlocker b(m_search);
