@@ -72,6 +72,19 @@ private slots:
         QCOMPARE(Mime::displayName(l[2]), QString("Élodie"));
     }
 
+    void dates()
+    {
+        QLocale::setDefault(QLocale(QLocale::French, QLocale::France));
+        const QDateTime summer(QDate(2026, 7, 14), QTime(14, 32, 10));
+        const QDateTime winter(QDate(2026, 1, 5), QTime(8, 5, 59));
+        QCOMPARE(Mime::longDate(summer), QString("mardi 14 juillet 2026 à 14:32"));
+        QCOMPARE(Mime::longDate(winter), QString("lundi 5 janvier 2026 à 08:05"));
+        for (const QDateTime &d : {summer, winter})
+            for (const char *forbidden : {"heure", "UTC", "GMT", "CET", "CEST", ":10", ":59"})
+                QVERIFY2(!Mime::longDate(d).contains(forbidden), qPrintable(Mime::longDate(d)));
+        QLocale::setDefault(QLocale::system());
+    }
+
     void parseMessage()
     {
         QStringEncoder latin1(QStringEncoder::Latin1);

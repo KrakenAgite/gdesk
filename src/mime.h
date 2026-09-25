@@ -49,5 +49,6 @@ QString emailOnly(const QString &address);   // « Jean Dupont <j@x.fr> » → �
 QString textToHtml(const QString &text);
 QString htmlToText(const QString &html);
 QString shortDate(const QDateTime &date);
+QString longDate(const QDateTime &date); // « jeudi 25 septembre 2026 à 14:32 » (sans fuseau horaire)
 QString humanSize(qint64 bytes);
 }

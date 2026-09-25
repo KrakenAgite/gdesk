@@ -858,7 +858,7 @@ void MainWindow::fillRow(QTreeWidgetItem *item, const MailMessage &m)
     item->setData(0, MailRoles::Subject, subject);
     item->setToolTip(0, QString("<b>%1</b><br>%2<br><i>%3</i>")
                             .arg((outgoing ? m.to : m.from).toHtmlEscaped(), subject.toHtmlEscaped(),
-                                 QLocale().toString(m.date.toLocalTime(), QLocale::LongFormat)));
+                                 Mime::longDate(m.date)));
     rememberAddresses(m.from);
 }
 

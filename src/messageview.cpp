@@ -251,7 +251,7 @@ void MessageView::showMessage(const MailMessage &message, bool allowRemote)
     m_from->setText(QString("<b>%1</b> &lt;%2&gt;")
                         .arg(Mime::displayName(message.from).toHtmlEscaped(),
                              Mime::emailOnly(message.from).toHtmlEscaped()));
-    m_date->setText(QLocale().toString(message.date.toLocalTime(), QLocale::LongFormat));
+    m_date->setText(Mime::longDate(message.date));
     QString details = "À : " + message.to;
     if (!message.cc.isEmpty())
         details += "\nCc : " + message.cc;

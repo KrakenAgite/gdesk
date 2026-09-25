@@ -293,6 +293,16 @@ QString shortDate(const QDateTime &date)
     return locale.toString(local.date(), "dd/MM/yyyy");
 }
 
+QString longDate(const QDateTime &date)
+{
+    // Le format « long » de Qt ajoute le nom du fuseau (« heure d'été d'Europe centrale ») et les secondes :
+    // on compose la date longue et l'heure courte séparément.
+    const QDateTime local = date.toLocalTime();
+    QLocale locale;
+    return QString("%1 à %2").arg(locale.toString(local.date(), QLocale::LongFormat),
+                                  locale.toString(local.time(), "HH:mm"));
+}
+
 QString humanSize(qint64 bytes)
 {
     return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
