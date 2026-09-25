@@ -1119,10 +1119,13 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         QVERIFY(view->message().id.isEmpty());
 
         // Menu de sélection : « Suivis » coche m5 et m7
-        QMenu *pick = nullptr;
-        for (QToolButton *b : bar->findChildren<QToolButton *>())
-            if (b->arrowType() == Qt::DownArrow)
-                pick = b->menu();
+        auto *pickButton = bar->findChild<QToolButton *>("selectionPick");
+        QVERIFY(pickButton);
+        // Une seule flèche : la nôtre, sans l'indicateur de menu ajouté par le style
+        QCOMPARE(pickButton->arrowType(), Qt::DownArrow);
+        QVERIFY(!pickButton->menu());
+        QCOMPARE(pickButton->popupMode(), QToolButton::DelayedPopup);
+        QMenu *pick = pickButton->findChild<QMenu *>();
         QVERIFY(pick);
         for (QAction *a : pick->actions())
             if (a->text() == "Suivis")

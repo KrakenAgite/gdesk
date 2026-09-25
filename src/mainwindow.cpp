@@ -1104,9 +1104,9 @@ QWidget *MainWindow::buildSelectionBar()
     h->addWidget(m_masterCheck);
 
     auto *pick = new QToolButton;
+    pick->setObjectName("selectionPick");
     pick->setAutoRaise(true);
     pick->setArrowType(Qt::DownArrow);
-    pick->setPopupMode(QToolButton::InstantPopup);
     pick->setToolTip("Sélectionner…");
     auto *pickMenu = new QMenu(pick);
     pickMenu->addAction("Tous", this, [this] { checkWhere([](const QStringList &) { return true; }); });
@@ -1117,7 +1117,10 @@ QWidget *MainWindow::buildSelectionBar()
     pickMenu->addAction("Suivis", this, [this] { checkWhere([](const QStringList &l) { return l.contains("STARRED"); }); });
     pickMenu->addAction("Non suivis", this,
                         [this] { checkWhere([](const QStringList &l) { return !l.contains("STARRED"); }); });
-    pick->setMenu(pickMenu);
+    // Menu ouvert à la main : un bouton « à menu » recevrait en plus l'indicateur du style (double flèche)
+    connect(pick, &QToolButton::clicked, this, [pick, pickMenu] {
+        pickMenu->popup(pick->mapToGlobal(QPoint(0, pick->height())));
+    });
     h->addWidget(pick);
     h->addSpacing(6);
 
