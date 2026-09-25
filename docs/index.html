@@ -26,13 +26,13 @@
       <h1>Vos e-mails Gmail,<br>dans une vraie application KDE</h1>
       <p class="lead">G-Desk est un client mail natif et libre pour Debian et KDE Plasma. Il utilise l'API officielle
         de Gmail : pas de navigateur intégré, pas de serveur intermédiaire, pas de pistage.</p>
-      <a class="btn" href="https://github.com/KrakenAgite/gdesk/releases/download/v2.3.1/gdesk_2.3.1_amd64.deb">
+      <a class="btn" href="https://github.com/KrakenAgite/gdesk/releases/download/v2.4.0/gdesk_2.4.0_amd64.deb">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/></svg>
         Télécharger le .deb
       </a>
-      <p class="meta">Version 2.3.1 · Debian 13 (Trixie) · amd64 · 267 Ko ·
+      <p class="meta">Version 2.4.0 · Debian 13 (Trixie) · amd64 · 354 Ko ·
         <a href="https://github.com/KrakenAgite/gdesk/releases">toutes les versions</a></p>
-      <p class="meta checksum">SHA-256 : 5f513bf2c8e80cd1908b90497d27233e41f5bf8aabd183ea6e8fc182f6edb7c9</p>
+      <p class="meta checksum">SHA-256 : 12f8deee6a2fa2e42bf7ba7304b505d570854fc1f02e130d8f8652bbed6c3e1f</p>
     </div>
 
     <section>
@@ -43,6 +43,7 @@
           <div class="card"><h3>Lecture protégée</h3><p>Les messages HTML s'affichent sans JavaScript et les images distantes (souvent des pisteurs) restent bloquées tant que vous ne les autorisez pas.</p></div>
           <div class="card"><h3>Écrire et répondre</h3><p>Réponse, transfert avec pièces jointes, brouillons enregistrés dans Gmail, autocomplétion des adresses et emojis 😀 en couleur.</p></div>
           <div class="card"><h3>Trier rapidement</h3><p>Cochez plusieurs messages pour les marquer lus ou non lus, les archiver, les supprimer ou les signaler en spam. Clic droit sur une boîte : tout marquer comme lu ou la vider.</p></div>
+          <div class="card"><h3>Google Drive intégré</h3><p>Passez du courrier à Drive d'un clic dans la barre de gauche : parcourir, importer, télécharger, joindre un fichier Drive à un message ou y enregistrer une pièce jointe.</p></div>
           <div class="card"><h3>Recherche Gmail</h3><p>La syntaxe de recherche de Gmail fonctionne telle quelle : <code>from:</code>, <code>has:attachment</code>, <code>after:2026/01/01</code>…</p></div>
           <div class="card"><h3>À votre goût</h3><p>Messages en cartes, thème clair ou sombre, taille compacte ou espacée, aperçu en dessous ou à droite, signature et nom affiché.</p></div>
           <div class="card"><h3>Intégré à KDE</h3><p>Notifications Plasma pour les boîtes de votre choix, pastille de non-lus, jeton rangé dans KWallet, application par défaut pour les liens <code>mailto:</code>.</p></div>
@@ -54,11 +55,11 @@
       <div class="wrap install">
         <h2>Installation</h2>
         <p>Téléchargez le paquet ci-dessus, puis installez-le depuis un terminal (ou double-cliquez dessus dans Dolphin) :</p>
-        <pre><code>sudo apt install ./gdesk_2.3.1_amd64.deb</code></pre>
+        <pre><code>sudo apt install ./gdesk_2.4.0_amd64.deb</code></pre>
         <p>Toutes les dépendances sont installées automatiquement. G-Desk apparaît aussitôt dans le menu des applications (rubrique Internet) et dans Discover, prêt à être lancé. Pour le désinstaller :</p>
         <pre><code>sudo apt remove gdesk</code></pre>
         <p>Pour vérifier que le fichier téléchargé est intact, comparez son empreinte avec celle affichée plus haut :</p>
-        <pre><code>sha256sum gdesk_2.3.1_amd64.deb</code></pre>
+        <pre><code>sha256sum gdesk_2.4.0_amd64.deb</code></pre>
       </div>
     </section>
 
@@ -70,7 +71,7 @@
           entre votre ordinateur et Google, sans passer par un tiers. L'assistant de G-Desk vous guide :</p>
         <ol class="steps">
           <li>Créez un projet sur la <a href="https://console.cloud.google.com/projectcreate">console Google Cloud</a>.</li>
-          <li>Activez l'<a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">API Gmail</a>.</li>
+          <li>Activez l'<a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">API Gmail</a> et l'<a href="https://console.cloud.google.com/apis/library/drive.googleapis.com">API Google Drive</a>.</li>
           <li>Dans <a href="https://console.cloud.google.com/auth/overview">Google Auth Platform</a>, configurez l'écran de consentement (audience <em>Externe</em>).</li>
           <li>Dans <a href="https://console.cloud.google.com/auth/audience">Audience</a>, ajoutez votre adresse comme utilisateur test, puis cliquez sur <em>Publier l'application</em>.</li>
           <li>Dans <a href="https://console.cloud.google.com/auth/clients">Clients</a>, créez un client de type <em>Application de bureau</em> et téléchargez le fichier JSON.</li>
