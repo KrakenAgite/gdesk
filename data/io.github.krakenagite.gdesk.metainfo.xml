@@ -48,8 +48,9 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
-    <release version="2.1.1" date="2026-09-25">
+    <release version="2.2.0" date="2026-09-25">
       <description>
+        <p>Messages are now shown as cards: sender in bold with the date opposite, subject below and the beginning of the message when there is room.</p>
         <p>Fix: the "preview on the right" layout stayed below the list for users upgrading from 2.0.</p>
       </description>
     </release>

@@ -83,22 +83,39 @@ void drawMiniWindow(QPainter &p, const QRectF &r, const QPalette &pal, const QSt
     }
     p.fillRect(QRectF(sidebar.right(), content.top(), 1, content.height()), mid);
 
-    const double rowH = density == "compact" ? 5.5 : density == "spacious" ? 12 : 8.5;
+    // Messages en cartes : nom + date, objet, début du message selon la densité
+    const bool dark = window.lightness() < 128;
+    const QColor card = dark ? window.lighter(118) : base;
+    p.fillRect(list, window);
+    const int lines = density == "compact" ? 2 : density == "spacious" ? 4 : 3;
+    const double pad = density == "compact" ? 2.0 : density == "spacious" ? 3.5 : 2.5;
+    const double cardH = lines * 4.2 + 2 * pad;
     int row = 0;
-    for (double y = list.top() + 2; y + rowH <= list.bottom() - 1; y += rowH, ++row) {
-        const QRectF rowRect(list.left() + 2, y, list.width() - 4, rowH - 1);
-        if (row == 0) {
-            QColor sel = accent;
-            sel.setAlphaF(0.35);
-            p.setBrush(sel);
-            p.drawRoundedRect(rowRect, 2, 2);
+    for (double y = list.top() + 2; y + cardH <= list.bottom() - 1; y += cardH + 2, ++row) {
+        const QRectF c(list.left() + 3, y, list.width() - 6, cardH);
+        p.setPen(QPen(row == 0 ? accent : mid, 0.6));
+        QColor bg = card;
+        if (row == 0)
+            bg = QColor::fromRgbF(bg.redF() * 0.78 + accent.redF() * 0.22, bg.greenF() * 0.78 + accent.greenF() * 0.22,
+                                  bg.blueF() * 0.78 + accent.blueF() * 0.22);
+        p.setBrush(bg);
+        p.drawRoundedRect(c, 2, 2);
+        p.setPen(Qt::NoPen);
+        const double x = c.left() + 5, w = c.width() - 8;
+        if (row % 3 == 0) { // non lu
+            p.setBrush(accent);
+            p.drawEllipse(QPointF(c.left() + 2.6, c.top() + pad + 1.2), 1.2, 1.2);
         }
-        const double lineH = qMin(2.6, rowH * 0.4);
-        p.setBrush(row == 0 ? strongText : text);
-        p.drawRoundedRect(QRectF(rowRect.left() + 3, rowRect.center().y() - lineH / 2,
-                                 rowRect.width() * (0.28 + 0.07 * (row % 3)), lineH), 1, 1);
-        p.drawRoundedRect(QRectF(rowRect.left() + rowRect.width() * 0.45, rowRect.center().y() - lineH / 2,
-                                 rowRect.width() * 0.4, lineH), 1, 1);
+        p.setBrush(strongText);
+        p.drawRoundedRect(QRectF(x, c.top() + pad, w * (0.35 + 0.08 * (row % 3)), 2.4), 1, 1);
+        p.setBrush(text);
+        p.drawRoundedRect(QRectF(c.right() - 3 - w * 0.12, c.top() + pad + 0.3, w * 0.12, 1.8), 1, 1);
+        p.drawRoundedRect(QRectF(x, c.top() + pad + 4.2, w * 0.62, 2), 1, 1);
+        QColor faint = text;
+        faint.setAlphaF(text.alphaF() * 0.6);
+        p.setBrush(faint);
+        for (int l = 2; l < lines; ++l)
+            p.drawRoundedRect(QRectF(x, c.top() + pad + 4.2 * l, w * (l == lines - 1 ? 0.7 : 0.9), 1.6), 1, 1);
     }
 
     // Aperçu : objet puis lignes de texte
@@ -270,12 +287,14 @@ QWidget *SettingsDialog::displayPage()
                        "automatiquement en couleurs sombres. Le rendu peut varier selon les messages."));
     v->addWidget(themeBox);
 
-    auto *densityBox = new QGroupBox("Taille des lignes de la liste");
+    auto *densityBox = new QGroupBox("Taille des messages dans la liste");
     auto *dv = new QVBoxLayout(densityBox);
     m_density = addCards(dv, PreviewCard::DensityCard,
                          {{"compact", "Compacte"}, {"comfortable", "Aérée"}, {"spacious", "Espacée"}});
-    m_showSnippet = new QCheckBox("Afficher le début du message après l'objet");
+    m_showSnippet = new QCheckBox("Afficher le début du message quand il y a la place");
     dv->addWidget(m_showSnippet);
+    dv->addWidget(hint("Compacte : nom et date, puis objet (suivi du début du message si la ligne le permet). "
+                       "Aérée : une ligne de début de message sous l'objet. Espacée : jusqu'à deux lignes."));
     v->addWidget(densityBox);
 
     auto *layoutBox = new QGroupBox("Disposition de la liste et de l'aperçu");

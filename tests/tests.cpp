@@ -1,5 +1,6 @@
 // Tests sans compte Google : MIME, connexion OAuth (jusqu'au serveur de Google) et visionneuse.
 #include "googleauth.h"
+#include "maillistdelegate.h"
 #include "mainwindow.h"
 #include "messageview.h"
 #include "mime.h"
@@ -11,6 +12,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QListWidget>
+#include <QTreeWidget>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
@@ -338,6 +340,69 @@ private slots:
             check(orientation);
         }
         win.close();
+    }
+    void mailCards()
+    {
+        struct Row { const char *who, *date, *subject, *snippet; QStringList labels; };
+        const QList<Row> rows = {
+            {"Élodie Martin", "14:32", "Réunion de rentrée : ordre du jour",
+             "Bonjour à tous, voici l'ordre du jour de la réunion de lundi prochain, merci de le lire avant.",
+             {"INBOX", "UNREAD"}},
+            {"Banque Populaire — Service client très long nom d'expéditeur", "11:05",
+             "Votre relevé de compte du mois de septembre est disponible dans votre espace personnel en ligne",
+             "Madame, Monsieur, votre relevé est disponible.", {"INBOX", "STARRED"}},
+            {"Paul", "3 sept.", "Re: photos", "Super, merci !", {"INBOX"}},
+            {"À : Jean Dupont, Marie", "28/08/2025", "(sans objet)", "", {"SENT"}},
+        };
+        const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
+        for (const QString &theme : {QString("light"), QString("dark")}) {
+            Theme::apply(theme);
+            for (const QString &density : {QString("compact"), QString("comfortable"), QString("spacious")}) {
+                for (int width : {400, 760}) {
+                    QTreeWidget list;
+                    list.setHeaderHidden(true);
+                    list.setRootIsDecorated(false);
+                    list.setIndentation(0);
+                    list.setFrameShape(QFrame::NoFrame);
+                    list.setUniformRowHeights(true);
+                    list.viewport()->setBackgroundRole(QPalette::Window);
+                    auto *delegate = new MailListDelegate(&list);
+                    delegate->density = density;
+                    list.setItemDelegate(delegate);
+                    for (const Row &r : rows) {
+                        auto *item = new QTreeWidgetItem(&list);
+                        item->setData(0, MailRoles::Who, r.who);
+                        item->setData(0, MailRoles::Date, r.date);
+                        item->setData(0, MailRoles::Subject, r.subject);
+                        item->setData(0, MailRoles::Snippet, r.snippet);
+                        item->setData(0, MailRoles::Labels, r.labels);
+                    }
+                    new QTreeWidgetItem(&list); // ligne encore en chargement
+                    list.setCurrentItem(list.topLevelItem(2));
+                    list.resize(width, 520);
+                    list.show();
+                    QVERIFY(QTest::qWaitForWindowExposed(&list));
+                    if (!out.isEmpty())
+                        list.grab().save(QString("%1/cards-%2-%3-%4.png").arg(out, theme, density).arg(width));
+
+                    // Hauteur : 2 lignes en compact, 3 en aéré, 4 en espacé
+                    const int h = list.visualItemRect(list.topLevelItem(0)).height();
+                    const int line = QFontMetrics(list.font()).height();
+                    QVERIFY2(h >= line * (density == "compact" ? 2 : density == "spacious" ? 4 : 3),
+                             qPrintable(QString("hauteur %1 pour %2").arg(h).arg(density)));
+
+                    // Clic sur l'étoile de la 1re carte
+                    QSignalSpy star(delegate, &MailListDelegate::starClicked);
+                    QStyleOptionViewItem opt;
+                    opt.initFrom(list.viewport());
+                    opt.rect = list.visualItemRect(list.topLevelItem(0));
+                    QTest::mouseClick(list.viewport(), Qt::LeftButton, {}, delegate->starRect(opt).center());
+                    QCOMPARE(star.count(), 1);
+                    QCOMPARE(star.first().first().value<QModelIndex>().row(), 0);
+                }
+            }
+        }
+        Theme::apply("system");
     }
 };
 

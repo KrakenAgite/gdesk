@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "gmailapi.h"
+#include "maillistdelegate.h"
 #include "googleauth.h"
 #include "messageview.h"
 #include "settingsdialog.h"
@@ -38,8 +39,8 @@
 #include <memory>
 
 namespace {
-enum Roles { IdRole = Qt::UserRole, LabelsRole, NameRole, SubjectRole, SnippetRole };
-enum Columns { ColStar, ColWho, ColSubject, ColDate };
+// Données des dossiers (celles de la liste des messages sont dans MailRoles)
+enum FolderRoles { FolderIdRole = Qt::UserRole, NameRole = Qt::UserRole + 2 };
 
 struct SystemLabel {
     const char *id, *name, *icon;
@@ -62,21 +63,6 @@ const SystemLabel categories[] = {
     {"CATEGORY_FORUMS", "Forums", "im-user"},
 };
 } // namespace
-
-// Hauteur des lignes de la liste selon la densité choisie
-class RowDelegate : public QStyledItemDelegate
-{
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-    int extraHeight = 8;
-
-    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
-    {
-        QSize s = QStyledItemDelegate::sizeHint(option, index);
-        s.rheight() += extraHeight;
-        return s;
-    }
-};
 
 MainWindow::MainWindow()
     : m_settings("gdesk", "gdesk"),
@@ -290,35 +276,32 @@ QWidget *MainWindow::buildMailPage()
     m_folders->setRootIsDecorated(true);
     m_folders->setMinimumWidth(170);
     connect(m_folders, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *cur) {
-        if (cur && cur->data(0, IdRole).isValid())
+        if (cur && cur->data(0, FolderIdRole).isValid())
             onFolderChanged();
     });
 
     // --- liste ---
     m_list = new QTreeWidget;
-    m_list->setColumnCount(4);
-    m_list->setHeaderLabels({"", "De", "Objet", "Date"});
+    m_list->setColumnCount(1);
+    m_list->setHeaderHidden(true);
     m_list->setRootIsDecorated(false);
+    m_list->setIndentation(0);
     m_list->setUniformRowHeights(true);
-    m_list->setAlternatingRowColors(true);
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_list->setAllColumnsShowFocus(true);
-    m_list->setTextElideMode(Qt::ElideRight);
-    m_rowDelegate = new RowDelegate(m_list);
-    m_list->setItemDelegate(m_rowDelegate);
-    QHeaderView *hdr = m_list->header();
-    hdr->setStretchLastSection(false);
-    hdr->setSectionResizeMode(ColStar, QHeaderView::Fixed);
-    hdr->resizeSection(ColStar, 28);
-    hdr->resizeSection(ColWho, 180);
-    hdr->setSectionResizeMode(ColSubject, QHeaderView::Stretch);
-    hdr->setSectionResizeMode(ColDate, QHeaderView::ResizeToContents);
+    m_list->setMouseTracking(true); // survol : étoile cliquable
+    m_list->setFrameShape(QFrame::NoFrame);
+    m_list->viewport()->setBackgroundRole(QPalette::Window); // les cartes se détachent du fond
+    m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_list->setMinimumWidth(260);
+    m_listDelegate = new MailListDelegate(m_list);
+    m_list->setItemDelegate(m_listDelegate);
     connect(m_list, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);
-    connect(m_list, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item, int column) {
-        if (column == ColStar) {
-            m_list->setCurrentItem(item);
-            toggleStar();
-        }
+    connect(m_listDelegate, &MailListDelegate::starClicked, this, [this](const QModelIndex &index) {
+        QTreeWidgetItem *item = m_list->itemFromIndex(index);
+        if (!item)
+            return;
+        m_list->setCurrentItem(item);
+        toggleStar();
     });
     connect(m_list->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         if (value >= m_list->verticalScrollBar()->maximum() - 5 && !m_loadingList && !m_nextPageToken.isEmpty())
@@ -480,13 +463,12 @@ void MainWindow::applySettings()
 
     // Densité de la liste
     const QString density = m_settings.value("density", "comfortable").toString();
-    m_rowDelegate->extraHeight = density == "compact" ? 0 : density == "spacious" ? 16 : 8;
-    m_list->setUniformRowHeights(false);
+    m_listDelegate->density = density;
+    m_listDelegate->showSnippet = m_settings.value("show_snippet", true).toBool();
+    m_list->setUniformRowHeights(false); // force le recalcul de la hauteur des cartes
     m_list->setUniformRowHeights(true);
     m_list->doItemsLayout();
-    m_showSnippet = m_settings.value("show_snippet", true).toBool();
-    for (QTreeWidgetItem *item : std::as_const(m_rows))
-        updateRowText(item);
+    m_list->viewport()->update();
 
     // Disposition : aperçu en dessous ou à droite
     const QString layout = m_settings.value("layout", "below").toString();
@@ -508,7 +490,6 @@ void MainWindow::applySettings()
                 m_rightSplitter->setSizes({total * 2 / 5, total * 3 / 5});
         }
         m_rightSplitter->setProperty("initialized", true);
-        m_list->header()->resizeSection(ColWho, layout == "right" ? 140 : 180);
     }
 
     // Général et confidentialité
@@ -644,7 +625,7 @@ void MainWindow::loadLabels()
             auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_folders);
             item->setText(0, name);
             item->setIcon(0, icon);
-            item->setData(0, IdRole, id);
+            item->setData(0, FolderIdRole, id);
             item->setData(0, NameRole, name);
             m_folderItems.insert(id, item);
             return item;
@@ -722,13 +703,12 @@ void MainWindow::onFolderChanged()
     QTreeWidgetItem *item = m_folders->currentItem();
     if (!item)
         return;
-    m_currentLabel = item->data(0, IdRole).toString();
+    m_currentLabel = item->data(0, FolderIdRole).toString();
     m_query.clear();
     {
         QSignalBlocker b(m_search);
         m_search->clear();
     }
-    m_list->headerItem()->setText(ColWho, (m_currentLabel == "SENT" || m_currentLabel == "DRAFT") ? "À" : "De");
     reloadList();
 }
 
@@ -781,8 +761,7 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
             if (m_rows.contains(id))
                 continue;
             auto *item = new QTreeWidgetItem(m_list);
-            item->setData(0, IdRole, id);
-            item->setText(ColSubject, "…");
+            item->setData(0, MailRoles::Id, id);
             m_rows.insert(id, item);
             if (id == keepSelected) {
                 m_restoringSelection = true;
@@ -801,44 +780,23 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
 
 void MainWindow::fillRow(QTreeWidgetItem *item, const MailMessage &m)
 {
-    item->setData(0, LabelsRole, m.labelIds);
     const bool outgoing = m_currentLabel == "SENT" || m_currentLabel == "DRAFT";
     QStringList names;
     for (const QString &a : Mime::splitAddresses(outgoing ? m.to : m.from))
         names << Mime::displayName(a);
-    item->setText(ColWho, names.isEmpty() ? QString("(inconnu)") : names.join(", "));
-    item->setToolTip(ColWho, outgoing ? m.to : m.from);
+    QString who = names.isEmpty() ? QString("(inconnu)") : names.join(", ");
+    if (outgoing)
+        who = "À : " + who;
     const QString subject = m.subject.isEmpty() ? QString("(sans objet)") : m.subject;
-    item->setData(0, SubjectRole, subject);
-    item->setData(0, SnippetRole, m.snippet);
-    updateRowText(item);
-    item->setToolTip(ColSubject, "<b>" + subject.toHtmlEscaped() + "</b><br>" + m.snippet.toHtmlEscaped());
-    item->setText(ColDate, Mime::shortDate(m.date));
-    item->setToolTip(ColDate, QLocale().toString(m.date.toLocalTime(), QLocale::LongFormat));
-    updateRowStyle(item);
+    item->setData(0, MailRoles::Labels, m.labelIds);
+    item->setData(0, MailRoles::Who, who);
+    item->setData(0, MailRoles::Date, Mime::shortDate(m.date));
+    item->setData(0, MailRoles::Snippet, m.snippet);
+    item->setData(0, MailRoles::Subject, subject);
+    item->setToolTip(0, QString("<b>%1</b><br>%2<br><i>%3</i>")
+                            .arg((outgoing ? m.to : m.from).toHtmlEscaped(), subject.toHtmlEscaped(),
+                                 QLocale().toString(m.date.toLocalTime(), QLocale::LongFormat)));
     rememberAddresses(m.from);
-}
-
-void MainWindow::updateRowText(QTreeWidgetItem *item)
-{
-    const QString subject = item->data(0, SubjectRole).toString();
-    const QString snippet = item->data(0, SnippetRole).toString();
-    if (subject.isEmpty())
-        return; // ligne encore en chargement
-    item->setText(ColSubject, (m_showSnippet && !snippet.isEmpty()) ? subject + "  —  " + snippet : subject);
-}
-
-void MainWindow::updateRowStyle(QTreeWidgetItem *item)
-{
-    const QStringList labels = item->data(0, LabelsRole).toStringList();
-    const bool unread = labels.contains("UNREAD");
-    for (int c = ColWho; c <= ColDate; ++c) {
-        QFont f = item->font(c);
-        f.setBold(unread);
-        item->setFont(c, f);
-    }
-    item->setIcon(ColStar, labels.contains("STARRED") ? QIcon::fromTheme("rating") : QIcon());
-    item->setToolTip(ColStar, labels.contains("STARRED") ? "Suivi" : "Cliquer pour suivre");
 }
 
 void MainWindow::removeRows(const QList<QTreeWidgetItem *> &items)
@@ -849,7 +807,7 @@ void MainWindow::removeRows(const QList<QTreeWidgetItem *> &items)
     {
         QSignalBlocker b(m_list);
         for (QTreeWidgetItem *it : items) {
-            m_rows.remove(it->data(0, IdRole).toString());
+            m_rows.remove(it->data(0, MailRoles::Id).toString());
             delete it;
         }
     }
@@ -866,7 +824,7 @@ void MainWindow::onSelectionChanged()
 {
     const QList<QTreeWidgetItem *> selected = m_list->selectedItems();
     if (selected.size() == 1 && !m_restoringSelection) {
-        const QString id = selected.first()->data(0, IdRole).toString();
+        const QString id = selected.first()->data(0, MailRoles::Id).toString();
         if (id != m_openId)
             openMessage(id);
     }
@@ -934,10 +892,9 @@ void MainWindow::markRead(const QString &id)
             scheduleCountsRefresh();
     });
     if (QTreeWidgetItem *item = m_rows.value(id)) {
-        QStringList labels = item->data(0, LabelsRole).toStringList();
+        QStringList labels = item->data(0, MailRoles::Labels).toStringList();
         labels.removeAll("UNREAD");
-        item->setData(0, LabelsRole, labels);
-        updateRowStyle(item);
+        item->setData(0, MailRoles::Labels, labels);
     }
 }
 
@@ -1048,7 +1005,7 @@ void MainWindow::applyLabels(const QStringList &add, const QStringList &remove, 
         return;
     QStringList ids;
     for (QTreeWidgetItem *it : items)
-        ids << it->data(0, IdRole).toString();
+        ids << it->data(0, MailRoles::Id).toString();
     m_api->modifyMessages(ids, add, remove, [this, done](const QJsonObject &, const QString &err) {
         if (!err.isEmpty()) {
             showError("L'opération a échoué", err);
@@ -1064,14 +1021,13 @@ void MainWindow::applyLabels(const QStringList &add, const QStringList &remove, 
         return;
     }
     for (QTreeWidgetItem *it : items) {
-        QStringList labels = it->data(0, LabelsRole).toStringList();
+        QStringList labels = it->data(0, MailRoles::Labels).toStringList();
         for (const QString &l : remove)
             labels.removeAll(l);
         for (const QString &l : add)
             if (!labels.contains(l))
                 labels << l;
-        it->setData(0, LabelsRole, labels);
-        updateRowStyle(it);
+        it->setData(0, MailRoles::Labels, labels);
     }
 }
 
@@ -1088,7 +1044,7 @@ void MainWindow::trash()
     if (items.isEmpty() || m_currentLabel == "TRASH")
         return;
     for (QTreeWidgetItem *it : items)
-        m_api->trashMessage(it->data(0, IdRole).toString(), [this](const QJsonObject &, const QString &err) {
+        m_api->trashMessage(it->data(0, MailRoles::Id).toString(), [this](const QJsonObject &, const QString &err) {
             if (!err.isEmpty())
                 showError("Suppression impossible", err);
             scheduleCountsRefresh();
@@ -1103,7 +1059,7 @@ void MainWindow::restore()
 {
     const QList<QTreeWidgetItem *> items = m_list->selectedItems();
     for (QTreeWidgetItem *it : items)
-        m_api->untrashMessage(it->data(0, IdRole).toString(), [this](const QJsonObject &, const QString &err) {
+        m_api->untrashMessage(it->data(0, MailRoles::Id).toString(), [this](const QJsonObject &, const QString &err) {
             if (!err.isEmpty())
                 showError("Restauration impossible", err);
             scheduleCountsRefresh();
@@ -1123,7 +1079,7 @@ void MainWindow::toggleRead()
 {
     bool anyUnread = false;
     for (QTreeWidgetItem *it : m_list->selectedItems())
-        anyUnread |= it->data(0, LabelsRole).toStringList().contains("UNREAD");
+        anyUnread |= it->data(0, MailRoles::Labels).toStringList().contains("UNREAD");
     if (anyUnread)
         applyLabels({}, {"UNREAD"}, false, {});
     else
@@ -1134,7 +1090,7 @@ void MainWindow::toggleStar()
 {
     bool anyUnstarred = false;
     for (QTreeWidgetItem *it : m_list->selectedItems())
-        anyUnstarred |= !it->data(0, LabelsRole).toStringList().contains("STARRED");
+        anyUnstarred |= !it->data(0, MailRoles::Labels).toStringList().contains("STARRED");
     if (anyUnstarred)
         applyLabels({"STARRED"}, {}, false, {});
     else

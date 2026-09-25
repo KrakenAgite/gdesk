@@ -18,7 +18,7 @@ class QLineEdit;
 class QNetworkAccessManager;
 class QPushButton;
 class QSplitter;
-class RowDelegate;
+class MailListDelegate;
 class QStackedWidget;
 class QTimer;
 class QToolButton;
@@ -69,8 +69,6 @@ private:
     void reloadList(const QString &keepSelected = {});
     void fetchPage(int generation, const QString &keepSelected);
     void fillRow(QTreeWidgetItem *item, const MailMessage &m);
-    void updateRowStyle(QTreeWidgetItem *item);
-    void updateRowText(QTreeWidgetItem *item);
     void removeRows(const QList<QTreeWidgetItem *> &items);
     void onSelectionChanged();
 
@@ -116,7 +114,7 @@ private:
 
     QSplitter *m_splitter;
     QSplitter *m_rightSplitter;
-    RowDelegate *m_rowDelegate;
+    MailListDelegate *m_listDelegate;
     QTreeWidget *m_folders;
     QTreeWidget *m_list;
     MessageView *m_view;
@@ -132,7 +130,6 @@ private:
     QString m_remoteMode = "ask";
     bool m_closeToTray = true;
     bool m_notificationsOn = true;
-    bool m_showSnippet = true;
 
     QString m_currentLabel = "INBOX";
     QString m_query;

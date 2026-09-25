@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gdesk VERSION 2.1.1 LANGUAGES CXX)
+project(gdesk VERSION 2.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ add_executable(gdesk
     src/setupdialog.cpp src/setupdialog.h
     src/settingsdialog.cpp src/settingsdialog.h
     src/theme.cpp src/theme.h
+    src/maillistdelegate.cpp src/maillistdelegate.h
     data/gdesk.qrc)
 target_compile_definitions(gdesk PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
 target_link_libraries(gdesk PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::DBus
@@ -52,7 +53,7 @@ if(GDESK_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(gdesk-tests tests/tests.cpp
         src/mime.cpp src/googleauth.cpp src/gmailapi.cpp src/messageview.cpp
-        src/settingsdialog.cpp src/theme.cpp src/mainwindow.cpp src/composer.cpp src/setupdialog.cpp
+        src/settingsdialog.cpp src/theme.cpp src/mainwindow.cpp src/composer.cpp src/setupdialog.cpp src/maillistdelegate.cpp
         data/gdesk.qrc)
     target_include_directories(gdesk-tests PRIVATE src)
     target_compile_definitions(gdesk-tests PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
