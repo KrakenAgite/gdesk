@@ -1,4 +1,6 @@
 // Tests sans compte Google : MIME, connexion OAuth (jusqu'au serveur de Google) et visionneuse.
+#include "composer.h"
+#include "gmailapi.h"
 #include "googleauth.h"
 #include "maillistdelegate.h"
 #include "sidebar.h"
@@ -12,8 +14,13 @@
 #include <QDesktopServices>
 #include <QIcon>
 #include <QImage>
+#include <QJsonDocument>
+#include <QProcess>
 #include <QJsonArray>
 #include <QListWidget>
+#include <QMenu>
+#include <QPlainTextEdit>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QSplitter>
@@ -70,6 +77,116 @@ private slots:
         QCOMPARE(Mime::emailOnly(l[0]), QString("j@x.fr"));
         QCOMPARE(Mime::emailOnly(l[1]), QString("paul@y.com"));
         QCOMPARE(Mime::displayName(l[2]), QString("Élodie"));
+    }
+
+    // Jeux de caractères des corps de message : chaque cas est (charset, octets bruts, texte attendu)
+    void charsets_data()
+    {
+        QTest::addColumn<QString>("charset");
+        QTest::addColumn<QByteArray>("raw");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("utf-8 emojis") << "UTF-8" << QString("Salut 😀 👨‍👩‍👧 🇫🇷 ✓ ½ — « ok »").toUtf8()
+                                     << QString("Salut 😀 👨‍👩‍👧 🇫🇷 ✓ ½ — « ok »");
+        QTest::newRow("windows-1252") << "windows-1252" << QByteArray("C\x9cur \x80 5 \x93ok\x94") << QString("Cœur € 5 “ok”");
+        QTest::newRow("iso-8859-15") << "iso-8859-15" << QByteArray("Prix : 5 \xa4, \xbc\xbd") << QString("Prix : 5 €, Œœ");
+        QTest::newRow("iso-8859-1") << "\"ISO-8859-1\"" << QByteArray("caf\xe9 d\xe9j\xe0") << QString("café déjà");
+        QTest::newRow("koi8-r") << "koi8-r" << QByteArray("\xf0\xd2\xc9\xd7\xc5\xd4") << QString("Привет");
+        QTest::newRow("shift_jis") << "Shift_JIS" << QByteArray("\x82\xb1\x82\xf1\x82\xc9\x82\xbf\x82\xcd") << QString("こんにちは");
+        QTest::newRow("iso-2022-jp") << "ISO-2022-JP" << QByteArray("\x1b$B$3$s$K$A$O\x1b(B") << QString("こんにちは");
+        QTest::newRow("gb2312") << "gb2312" << QByteArray("\xc4\xe3\xba\xc3") << QString("你好");
+    }
+
+    void charsets()
+    {
+        QFETCH(QString, charset);
+        QFETCH(QByteArray, raw);
+        QFETCH(QString, expected);
+        QJsonObject json{{"id", "m"}, {"payload", QJsonObject{
+            {"mimeType", "text/plain"},
+            {"headers", headers({{"Content-Type", "text/plain; charset=" + charset}})},
+            {"body", QJsonObject{{"data", b64url(raw)}}}}}};
+        QCOMPARE(Mime::parseMessage(json).text, expected);
+    }
+
+    // En-têtes encodés (RFC 2047) que Gmail renvoie parfois tels quels
+    void encodedHeaders()
+    {
+        QJsonObject json{{"id", "m"}, {"payload", QJsonObject{
+            {"mimeType", "text/plain"},
+            {"headers", headers({{"Subject", "=?UTF-8?B?8J+YgCBCb25qb3Vy?= =?ISO-8859-1?Q?caf=E9_cr=E8me?="},
+                                 {"From", "=?utf-8?q?=C3=89lodie_=F0=9F=8C=B8?= <e@x.fr>"}})},
+            {"body", QJsonObject{{"data", ""}}}}}};
+        const MailMessage m = Mime::parseMessage(json);
+        QCOMPARE(m.subject, QString("😀 Bonjourcafé crème"));
+        QCOMPARE(m.from, QString("Élodie 🌸 <e@x.fr>"));
+        QCOMPARE(Mime::displayName(m.from), QString("Élodie 🌸"));
+
+        // Un caractère coupé entre deux mots encodés (autorisé en pratique) doit être recollé
+        QJsonObject split{{"id", "m"}, {"payload", QJsonObject{
+            {"mimeType", "text/plain"},
+            {"headers", headers({{"Subject", "=?UTF-8?B?8J+Y?= =?UTF-8?B?gA==?= fin"}})},
+            {"body", QJsonObject{{"data", ""}}}}}};
+        QCOMPARE(Mime::parseMessage(split).subject, QString("😀 fin"));
+        // Texte ordinaire contenant « =? » : inchangé
+        QJsonObject plain{{"id", "m"}, {"payload", QJsonObject{
+            {"mimeType", "text/plain"},
+            {"headers", headers({{"Subject", "Résultat =? 2+2 ?= 4 😀"}})},
+            {"body", QJsonObject{{"data", ""}}}}}};
+        QCOMPARE(Mime::parseMessage(plain).subject, QString("Résultat =? 2+2 ?= 4 😀"));
+    }
+
+    // Aller-retour complet : ce que G-Desk envoie, relu par un analyseur indépendant (Python)
+    void sendEmojis()
+    {
+        OutgoingMail mail;
+        mail.from = "Gabriel 🚀 <moi@gmail.com>";
+        mail.to = "Zoë 🌸 <z@x.fr>";
+        mail.subject = "👨‍👩‍👧 Famille 🇫🇷 : « Noël » 🎄 — ½ € ✓ 日本語 " + QString(40, QChar(0x00E9));
+        mail.body = "Bises 😘\nÇa marche ✓ — ½ € — Привет — こんにちは";
+        Attachment a;
+        a.filename = "photo 📷 été.jpg";
+        a.mimeType = "image/jpeg";
+        a.data = "x";
+        mail.attachments << a;
+        const QByteArray raw = Mime::build(mail);
+        for (const QByteArray &line : raw.split('\n')) {
+            QVERIFY2(line.size() <= 998, "ligne trop longue");
+            for (char c : line)
+                QVERIFY2(uchar(c) < 128, "octet non ASCII dans le message brut"); // tout doit être encodé
+        }
+        QTemporaryDir dir;
+        QFile f(dir.filePath("m.eml"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(raw);
+        f.close();
+        QProcess py;
+        py.start("python3", {"-c", R"(
+import sys, email, json
+from email import policy
+m = email.message_from_bytes(open(sys.argv[1],'rb').read(), policy=policy.default)
+body = next(p for p in m.walk() if p.get_content_type()=='text/plain').get_content()
+att = next(p for p in m.walk() if p.get_filename())
+print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['to']),
+                  'body': body.replace('\r\n','\n'), 'file': att.get_filename()}))
+)", f.fileName()});
+        QVERIFY(py.waitForFinished(10000));
+        const QJsonObject r = QJsonDocument::fromJson(py.readAllStandardOutput()).object();
+        QVERIFY2(!r.isEmpty(), py.readAllStandardError().constData());
+        QCOMPARE(r.value("subject").toString(), mail.subject);
+        QCOMPARE(r.value("from").toString(), mail.from);
+        QCOMPARE(r.value("to").toString(), mail.to);
+        QCOMPARE(r.value("body").toString(), mail.body);
+        QCOMPARE(r.value("file").toString(), a.filename);
+    }
+
+    // Recherche : les caractères spéciaux doivent arriver intacts dans l'URL envoyée à Gmail
+    void searchEncoding()
+    {
+        const QString query = "café & co +1 😀 from:\"Zoë\" #tag 100%";
+        const QUrl url = GmailApi::messagesUrl({"INBOX"}, query, {}, 50);
+        const QString sent = QUrlQuery(url).queryItemValue("q", QUrl::FullyDecoded);
+        QCOMPARE(sent, query);
+        QVERIFY(!url.toEncoded().contains(' '));
     }
 
     void dates()
@@ -212,7 +329,7 @@ private slots:
         m.id = "t1";
         m.subject = "Test é";
         m.from = "Élodie <e@x.fr>";
-        m.html = "<p id=t>Bonjour éàü</p><img id=cid src=\"cid:img1@x\">"
+        m.html = "<p id=t>Bonjour éàü 😀👨‍👩‍👧🇫🇷 € œ</p><img id=cid src=\"cid:img1@x\">"
                  "<img id=remote src=\"https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_92x30dp.png\">"
                  "<script>document.title='js-a-tourne'</script>";
         Attachment a;
@@ -245,8 +362,13 @@ private slots:
         };
 
         const QString blocked = inspect(false);
+        view.resize(700, 260);
+        view.show();
+        QTest::qWait(1500);
+        if (!qEnvironmentVariable("GDESK_TEST_OUT").isEmpty())
+            view.grab().save(qEnvironmentVariable("GDESK_TEST_OUT") + "/viewer-emoji.png");
         qInfo() << "Images distantes bloquées :" << blocked;
-        QVERIFY(blocked.contains("\"text\":\"Bonjour éàü\""));
+        QVERIFY(blocked.contains("\"text\":\"Bonjour éàü 😀👨‍👩‍👧🇫🇷 € œ\""));
         QVERIFY(blocked.contains("\"cid\":10"));
         QVERIFY(blocked.contains("\"remote\":0"));
         QVERIFY(!blocked.contains("js-a-tourne"));
@@ -361,13 +483,13 @@ private slots:
     {
         struct Row { const char *who, *date, *subject, *snippet; QStringList labels; };
         const QList<Row> rows = {
-            {"Élodie Martin", "14:32", "Réunion de rentrée : ordre du jour",
-             "Bonjour à tous, voici l'ordre du jour de la réunion de lundi prochain, merci de le lire avant.",
+            {"Élodie 🌸 Martin", "14:32", "🎉 Réunion de rentrée : ordre du jour ✅",
+             "Bonjour à tous 👋 voici l'ordre du jour de lundi — café ☕ offert, 5 € la part ½ 🇫🇷",
              {"INBOX", "UNREAD"}},
             {"Banque Populaire — Service client très long nom d'expéditeur", "11:05",
              "Votre relevé de compte du mois de septembre est disponible dans votre espace personnel en ligne",
              "Madame, Monsieur, votre relevé est disponible.", {"INBOX", "STARRED"}},
-            {"Paul", "3 sept.", "Re: photos", "Super, merci !", {"INBOX"}},
+            {"Paul", "3 sept.", "Re: photos 📷 Привет こんにちは", "Super, merci ! 😂👍", {"INBOX"}},
             {"À : Jean Dupont, Marie", "28/08/2025", "(sans objet)", "", {"SENT"}},
         };
         const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
@@ -493,6 +615,48 @@ private slots:
         }
         Theme::apply("system");
     }
+    void composerEmojiPicker()
+    {
+        Composer c(nullptr, "moi@gmail.com", "Gabriel 🚀", {});
+        c.prepare(Composer::New);
+        c.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&c));
+        QToolButton *picker = nullptr;
+        for (QToolButton *b : c.findChildren<QToolButton *>())
+            if (b->text() == "😀" && b->menu())
+                picker = b;
+        QVERIFY(picker);
+        auto *subject = c.findChildren<QLineEdit *>().value(3); // À, Cc, Cci, Objet
+        auto *body = c.findChild<QPlainTextEdit *>();
+        QVERIFY(subject && body);
+        QVERIFY(body->toPlainText().contains("Gabriel 🚀")); // signature avec emoji
+
+        auto pick = [&](QWidget *focus, const QString &emoji) {
+            focus->setFocus();
+            c.activateWindow();
+            QTest::qWait(20);
+            QMenu *menu = picker->menu();
+            QMetaObject::invokeMethod(menu, "aboutToShow"); // comme à l'ouverture du menu
+            for (QToolButton *b : menu->findChildren<QToolButton *>())
+                if (b->text() == emoji) {
+                    b->click();
+                    return true;
+                }
+            return false;
+        };
+        QVERIFY(pick(subject, "🎉"));
+        QCOMPARE(subject->text(), QString("🎉"));
+        QVERIFY(pick(body, "🇫🇷"));
+        QVERIFY(body->toPlainText().startsWith("🇫🇷"));
+
+        const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
+        if (!out.isEmpty()) {
+            picker->menu()->popup(picker->mapToGlobal(QPoint(0, picker->height())));
+            QTest::qWait(100);
+            picker->menu()->grab().save(out + "/emoji-picker.png");
+            picker->menu()->close();
+        }
+    }
 };
 
 int main(int argc, char *argv[])
@@ -503,6 +667,7 @@ int main(int argc, char *argv[])
     QIcon::setThemeSearchPaths(QIcon::themeSearchPaths() << "/usr/share/icons");
     if (QIcon::themeName().isEmpty())
         QIcon::setThemeName("breeze");
+    Theme::enableColorEmoji();
 
     // Traductions de Qt (boutons Oui/Non, Annuler, sélecteur de fichiers…) dans la langue du système
     QTranslator qtTranslator;

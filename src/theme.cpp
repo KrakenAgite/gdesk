@@ -3,6 +3,9 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontDatabase>
+#include <QFontInfo>
 #include <QIcon>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -51,6 +54,28 @@ void init()
 {
     g_systemIconTheme = QIcon::themeName();
     g_initialized = true;
+}
+
+void enableColorEmoji()
+{
+    // Qt 6.8 ne choisit pas de lui-même la police emoji en couleur : sans cela, les emojis
+    // s'affichent en carrés vides ou en noir et blanc (Symbola), et les drapeaux en lettres.
+    QString emojiFamily;
+    for (const char *family : {"Noto Color Emoji", "Twemoji", "JoyPixels", "Apple Color Emoji", "Segoe UI Emoji"})
+        if (QFontDatabase::hasFamily(family)) {
+            emojiFamily = family;
+            break;
+        }
+    if (emojiFamily.isEmpty())
+        return;
+    QFont font = QApplication::font();
+    // Nom réel de la police (et non un alias comme « Sans Serif ») : sinon la police emoji,
+    // qui contient aussi chiffres et espaces, remplacerait une partie du texte normal.
+    const QString resolved = QFontInfo(font).family();
+    if (resolved.isEmpty() || resolved == emojiFamily)
+        return;
+    font.setFamilies({resolved, emojiFamily}); // la police emoji ne sert qu'aux caractères absents
+    QApplication::setFont(font);
 }
 
 QPalette palette(bool dark)

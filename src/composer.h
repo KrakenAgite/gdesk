@@ -3,12 +3,14 @@
 
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QPointer>
 #include <functional>
 
 class GmailApi;
 class QCompleter;
 class QListWidget;
 class QPlainTextEdit;
+class QToolButton;
 
 // Champ d'adresses avec autocomplétion sur la dernière adresse saisie
 class AddressEdit : public QLineEdit
@@ -53,6 +55,8 @@ private:
     void addAttachment(const Attachment &a);
     void setBusy(bool busy, const QString &status = {});
     QString signatureBlock() const;
+    QToolButton *buildEmojiButton();
+    void insertEmoji(const QString &emoji);
 
     GmailApi *m_api;
     QString m_myAddress, m_signature, m_threadId, m_draftId;
@@ -64,4 +68,5 @@ private:
     QList<Attachment> m_attachments;
     QList<QAction *> m_actions;
     bool m_done = false;
+    QPointer<QWidget> m_emojiTarget; // champ qui recevra l'emoji (objet, destinataire ou corps)
 };

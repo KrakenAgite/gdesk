@@ -2,14 +2,20 @@
 #include "gmailapi.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QCompleter>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QWidgetAction>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMimeDatabase>
 #include <QPlainTextEdit>
@@ -83,6 +89,7 @@ Composer::Composer(GmailApi *api, const QString &myAddress, const QString &signa
     m_actions << bar->addAction(QIcon::fromTheme("mail-attachment"), "Joindre…", this, &Composer::addFiles);
     m_actions << bar->addAction(QIcon::fromTheme("document-save"), "Enregistrer le brouillon", QKeySequence::Save,
                                 this, [this] { saveDraft(); });
+    bar->addWidget(buildEmojiButton());
     auto *spacer = new QWidget;
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(spacer);
@@ -136,6 +143,69 @@ Composer::Composer(GmailApi *api, const QString &myAddress, const QString &signa
     setAcceptDrops(false);
     statusBar();
     m_to->setFocus();
+}
+
+QToolButton *Composer::buildEmojiButton()
+{
+    static const QStringList emojis = {
+        "😀", "😂", "😊", "😍", "😘", "😉", "🙂", "🤔", "😅", "😢", "😭", "😡",
+        "👍", "👎", "👏", "🙏", "💪", "👋", "🤝", "✌️", "👌", "❤️", "💙", "💚",
+        "🎉", "🎂", "🎁", "☀️", "🌧️", "❄️", "🔥", "⭐", "✅", "❌", "⚠️", "📎",
+        "📅", "📞", "📷", "☕", "🍕", "🍷", "🏠", "🚗", "✈️", "💼", "💡", "🇫🇷"};
+    auto *button = new QToolButton;
+    button->setText("😀");
+    button->setToolTip("Insérer un emoji");
+    QFont f = button->font();
+    f.setPointSizeF(f.pointSizeF() * 1.3);
+    button->setFont(f);
+    button->setPopupMode(QToolButton::InstantPopup);
+
+    auto *menu = new QMenu(button);
+    auto *grid = new QWidget;
+    auto *layout = new QGridLayout(grid);
+    layout->setSpacing(2);
+    layout->setContentsMargins(6, 6, 6, 6);
+    QFont big = font();
+    big.setPointSizeF(big.pointSizeF() * 1.45);
+    for (int i = 0; i < emojis.size(); ++i) {
+        auto *b = new QToolButton;
+        b->setText(emojis[i]);
+        b->setFont(big);
+        b->setAutoRaise(true);
+        b->setFixedSize(38, 38);
+        connect(b, &QToolButton::clicked, this, [this, menu, e = emojis[i]] {
+            menu->close();
+            insertEmoji(e);
+        });
+        layout->addWidget(b, i / 12, i % 12);
+    }
+    auto *gridAction = new QWidgetAction(menu);
+    gridAction->setDefaultWidget(grid);
+    menu->addAction(gridAction);
+    const QString emojier = QStandardPaths::findExecutable("plasma-emojier");
+    if (!emojier.isEmpty()) {
+        menu->addSeparator();
+        menu->addAction(QIcon::fromTheme("preferences-desktop-emoticons"), "Plus d'emojis… (Meta+.)", this, [emojier] {
+            QProcess::startDetached(emojier, {}); // l'emoji choisi est copié : Ctrl+V pour le coller
+        });
+    }
+    // Mémorise le champ où insérer avant que le menu ne prenne le focus
+    connect(menu, &QMenu::aboutToShow, this, [this] {
+        QWidget *w = QApplication::focusWidget();
+        m_emojiTarget = (qobject_cast<QLineEdit *>(w) || qobject_cast<QPlainTextEdit *>(w)) ? w : m_body;
+    });
+    button->setMenu(menu);
+    return button;
+}
+
+void Composer::insertEmoji(const QString &emoji)
+{
+    QWidget *target = m_emojiTarget ? m_emojiTarget.data() : m_body;
+    if (auto *line = qobject_cast<QLineEdit *>(target))
+        line->insert(emoji);
+    else if (auto *edit = qobject_cast<QPlainTextEdit *>(target))
+        edit->insertPlainText(emoji);
+    target->setFocus();
 }
 
 QString Composer::signatureBlock() const

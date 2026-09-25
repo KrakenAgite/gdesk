@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
     QApplication::setDesktopFileName("gdesk");
     QApplication::setQuitOnLastWindowClosed(false);
     Theme::init(); // mémorise l'apparence KDE avant toute personnalisation
+    Theme::enableColorEmoji();
 
     // Traductions de Qt (boutons Oui/Non, Annuler, sélecteur de fichiers…) dans la langue du système
     QTranslator qtTranslator;

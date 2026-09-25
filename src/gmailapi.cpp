@@ -72,8 +72,8 @@ void GmailApi::getLabel(const QString &id, Callback cb)
     call("GET", "labels/" + QUrl::toPercentEncoding(id), {}, {}, cb);
 }
 
-void GmailApi::listMessages(const QStringList &labelIds, const QString &query, const QString &pageToken,
-                            int maxResults, Callback cb)
+static QUrlQuery messagesQuery(const QStringList &labelIds, const QString &query, const QString &pageToken,
+                               int maxResults)
 {
     QUrlQuery q;
     for (const QString &l : labelIds)
@@ -85,7 +85,20 @@ void GmailApi::listMessages(const QStringList &labelIds, const QString &query, c
     q.addQueryItem("maxResults", QString::number(maxResults));
     if (labelIds.contains("SPAM") || labelIds.contains("TRASH"))
         q.addQueryItem("includeSpamTrash", "true");
-    call("GET", "messages", q, {}, cb);
+    return q;
+}
+
+QUrl GmailApi::messagesUrl(const QStringList &labelIds, const QString &query, const QString &pageToken, int maxResults)
+{
+    QUrl url(BaseUrl + "messages");
+    url.setQuery(messagesQuery(labelIds, query, pageToken, maxResults));
+    return url;
+}
+
+void GmailApi::listMessages(const QStringList &labelIds, const QString &query, const QString &pageToken,
+                            int maxResults, Callback cb)
+{
+    call("GET", "messages", messagesQuery(labelIds, query, pageToken, maxResults), {}, cb);
 }
 
 void GmailApi::getMessage(const QString &id, bool full, Callback cb)

@@ -34,8 +34,8 @@ DEPENDS=$(cd build/shlibs && dpkg-shlibdeps -O "../../$STAGE/usr/bin/gdesk" 2>/d
 [ -n "$DEPENDS" ] || DEPENDS="libqt6webenginewidgets6 (>= 6.8), libqt6webenginecore6 (>= 6.8), libqt6widgets6, libqt6gui6, libqt6network6, libqt6dbus6, libqt6core6t64"
 
 # Modules chargés dynamiquement par Qt, invisibles pour dpkg-shlibdeps :
-# affichage X11/Wayland et rendu de l'icône SVG
-RUNTIME_DEPENDS="qt6-qpa-plugins, qt6-wayland, qt6-svg-plugins, hicolor-icon-theme"
+# affichage X11/Wayland, rendu des icônes SVG, emojis en couleur
+RUNTIME_DEPENDS="qt6-qpa-plugins, qt6-wayland, qt6-svg-plugins, hicolor-icon-theme, fonts-noto-color-emoji"
 
 mkdir -p "$STAGE/DEBIAN"
 cat > "$STAGE/DEBIAN/control" <<CTRL

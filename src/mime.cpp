@@ -26,18 +26,73 @@ QByteArray base64UrlDecode(const QString &s)
     return QByteArray::fromBase64(s.toLatin1(), QByteArray::Base64UrlEncoding);
 }
 
-QString decodeText(const QByteArray &data, const QString &contentType)
+QString decodeCharset(const QByteArray &data, QString charset)
 {
-    static const QRegularExpression re(R"(charset\s*=\s*"?([^";\s]+))", QRegularExpression::CaseInsensitiveOption);
-    const QString charset = re.match(contentType).captured(1).toLower();
+    charset = charset.toLower().section('*', 0, 0); // RFC 2231 : « utf-8*fr »
     if (charset.isEmpty() || charset == "utf-8" || charset == "utf8" || charset == "us-ascii")
         return QString::fromUtf8(data);
-    QStringDecoder decoder(charset.toLatin1().constData());
+    QStringDecoder decoder(charset.toLatin1().constData()); // ICU : tous les jeux de caractères courants
     if (decoder.isValid())
         return decoder.decode(data);
     if (charset.startsWith("iso-8859") || charset.startsWith("windows-125"))
         return QString::fromLatin1(data);
     return QString::fromUtf8(data);
+}
+
+QString decodeText(const QByteArray &data, const QString &contentType)
+{
+    static const QRegularExpression re(R"(charset\s*=\s*"?([^";\s]+))", QRegularExpression::CaseInsensitiveOption);
+    const QString charset = re.match(contentType).captured(1).toLower();
+    return decodeCharset(data, charset);
+}
+
+// Décode les mots encodés RFC 2047 (=?charset?B|Q?texte?=) restés dans un en-tête.
+// Les mots consécutifs de même jeu de caractères sont décodés ensemble, pour recoller
+// un caractère (emoji, idéogramme…) coupé entre deux mots.
+QString decodeEncodedWords(const QString &value)
+{
+    static const QRegularExpression word(R"(=\?([^?\s]+)\?([BbQq])\?([^?\s]*)\?=)");
+    if (!value.contains("=?"))
+        return value;
+    QString out;
+    QByteArray pending;
+    QString pendingCharset;
+    auto flush = [&] {
+        if (!pending.isEmpty())
+            out += decodeCharset(pending, pendingCharset);
+        pending.clear();
+    };
+    qsizetype pos = 0;
+    bool previousWasWord = false;
+    auto it = word.globalMatch(value);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        const QString between = value.mid(pos, m.capturedStart() - pos);
+        // Les blancs entre deux mots encodés ne font pas partie du texte (RFC 2047 §6.2)
+        if (!(previousWasWord && between.trimmed().isEmpty())) {
+            flush();
+            out += between;
+        }
+        const QString charset = m.captured(1);
+        QByteArray bytes;
+        const QByteArray payload = m.captured(3).toLatin1();
+        if (m.captured(2).compare("B", Qt::CaseInsensitive) == 0) {
+            bytes = QByteArray::fromBase64(payload);
+        } else {
+            QByteArray q = payload;
+            q.replace('_', ' ');
+            bytes = QByteArray::fromPercentEncoding(q, '=');
+        }
+        if (charset.compare(pendingCharset, Qt::CaseInsensitive) != 0)
+            flush();
+        pendingCharset = charset;
+        pending += bytes;
+        pos = m.capturedEnd();
+        previousWasWord = true;
+    }
+    flush();
+    out += value.mid(pos);
+    return out;
 }
 
 void walk(const QJsonObject &part, MailMessage &m)
@@ -58,7 +113,7 @@ void walk(const QJsonObject &part, MailMessage &m)
     const bool isText = mime == "text/plain" || mime == "text/html";
     if (!filename.isEmpty() || disposition.startsWith("attachment") || (!isText && body.contains("attachmentId"))) {
         Attachment a;
-        a.filename = filename.isEmpty() ? QStringLiteral("piece-jointe") : filename;
+        a.filename = filename.isEmpty() ? QStringLiteral("piece-jointe") : decodeEncodedWords(filename);
         a.mimeType = mime;
         a.attachmentId = body.value("attachmentId").toString();
         a.size = body.value("size").toInteger();
@@ -167,11 +222,11 @@ MailMessage parseMessage(const QJsonObject &json)
 
     const QJsonObject payload = json.value("payload").toObject();
     const QJsonArray headers = payload.value("headers").toArray();
-    m.from = header(headers, "From");
-    m.to = header(headers, "To");
-    m.cc = header(headers, "Cc");
-    m.replyTo = header(headers, "Reply-To");
-    m.subject = header(headers, "Subject");
+    m.from = decodeEncodedWords(header(headers, "From"));
+    m.to = decodeEncodedWords(header(headers, "To"));
+    m.cc = decodeEncodedWords(header(headers, "Cc"));
+    m.replyTo = decodeEncodedWords(header(headers, "Reply-To"));
+    m.subject = decodeEncodedWords(header(headers, "Subject"));
     m.messageId = header(headers, "Message-ID");
     m.references = header(headers, "References");
     if (payload.contains("body") || payload.contains("parts"))
@@ -297,6 +352,8 @@ QString longDate(const QDateTime &date)
 {
     // Le format « long » de Qt ajoute le nom du fuseau (« heure d'été d'Europe centrale ») et les secondes :
     // on compose la date longue et l'heure courte séparément.
+    if (!date.isValid() || date.toMSecsSinceEpoch() == 0)
+        return {};
     const QDateTime local = date.toLocalTime();
     QLocale locale;
     return QString("%1 à %2").arg(locale.toString(local.date(), QLocale::LongFormat),

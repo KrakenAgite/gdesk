@@ -10,6 +10,8 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
 - Messages présentés en cartes : expéditeur en gras et date, objet, puis début du message
 - Lecture des messages HTML dans un bac à sable : pas de JavaScript, images distantes
   (pisteurs) bloquées sauf autorisation, images intégrées affichées
+- Emojis en couleur partout et sélecteur d'emojis dans la rédaction ; tous les jeux de caractères
+  (UTF-8, Windows-1252, ISO-8859-x, cyrillique, japonais, chinois…)
 - Répondre, répondre à tous, transférer (avec pièces jointes), nouveau message,
   pièces jointes, brouillons enregistrés dans Gmail, autocomplétion des adresses
 - Archiver, supprimer, restaurer, spam, lu/non lu, suivi — sur plusieurs messages à la fois
