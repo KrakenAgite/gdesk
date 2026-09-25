@@ -11,6 +11,9 @@
 #include <functional>
 #include <memory>
 
+class DriveApi;
+class DriveView;
+struct DriveFile;
 class GmailApi;
 class GoogleAuth;
 class MessageView;
@@ -24,6 +27,7 @@ class AccountChip;
 class MailListDelegate;
 class QStackedWidget;
 class QTimer;
+class QToolBar;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -51,7 +55,9 @@ private:
     // Interface
     void buildActions();
     QWidget *buildLoginPage();
+    QWidget *buildConnectedPage(); // barre de navigation (Courrier, Drive) + vue choisie
     QWidget *buildMailPage();
+    void showView(bool drive);
     QMenu *buildAccountMenu();
     void setupTray();
     void updateActions();
@@ -89,6 +95,8 @@ private:
     void fetchAttachment(int index, std::function<void(const QByteArray &)> cb);
     void saveAttachment(int index);
     void openAttachment(int index);
+    void saveAttachmentToDrive(int index);
+    void composeWithDriveFiles(const QList<DriveFile> &files);
     void rememberAddresses(const QString &addresses);
     void setKnownAddresses(const QStringList &addresses);
 
@@ -140,9 +148,16 @@ private:
     QNetworkAccessManager *m_nam;
     GoogleAuth *m_auth;
     GmailApi *m_api;
+    DriveApi *m_drive;
     QString m_email;
 
     QStackedWidget *m_pages;
+    QStackedWidget *m_views = nullptr; // courrier ou Drive
+    QWidget *m_mailPage = nullptr;
+    DriveView *m_driveView = nullptr;  // créée au premier affichage
+    QToolBar *m_rail = nullptr;
+    QAction *m_railMail = nullptr, *m_railDrive = nullptr;
+    QList<QAction *> m_mailOnlyActions; // raccourcis du courrier, inactifs dans la vue Drive
     QLabel *m_loginIcon, *m_loginStatus;
     QPushButton *m_loginButton, *m_setupButton, *m_cancelButton;
 

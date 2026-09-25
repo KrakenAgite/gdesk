@@ -23,7 +23,7 @@
 
   <main class="wrap legal">
     <h1>Politique de confidentialité</h1>
-    <p class="updated">Dernière mise à jour : 25 septembre 2026 (version 2.1.0)</p>
+    <p class="updated">Dernière mise à jour : 25 septembre 2026 (version 2.4.0)</p>
 
     <p>Cette politique explique quelles données personnelles sont traitées lorsque vous utilisez le logiciel
       <strong>G-Desk</strong> et lorsque vous consultez son site web, et quels sont vos droits. Elle est établie
@@ -78,22 +78,25 @@
         <tr><td>Jeton de rafraîchissement Google</td><td>Rester connecté sans ressaisir son mot de passe</td>
           <td>Portefeuille KDE (KWallet) ; à défaut, fichier lisible par vous seul dans <code>~/.config/gdesk/</code></td>
           <td>Jusqu'à la déconnexion depuis G-Desk ou la révocation chez Google</td></tr>
-        <tr><td>Identifiant et code secret de votre client OAuth</td><td>Se connecter à l'API Gmail</td>
+        <tr><td>Identifiant et code secret de votre client OAuth</td><td>Se connecter aux API Gmail et Google Drive</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Adresses e-mail de vos correspondants (1 000 au maximum)</td><td>Proposer l'autocomplétion lors de la rédaction</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Expéditeurs dont vous autorisez les images</td><td>Afficher automatiquement leurs images distantes</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
-        <tr><td>Pièces jointes que vous ouvrez</td><td>Les ouvrir avec l'application adaptée</td>
+        <tr><td>Pièces jointes et fichiers Google Drive que vous ouvrez</td><td>Les ouvrir avec l'application adaptée</td>
           <td>Dossier temporaire du système (<code>/tmp</code>)</td><td>Effacées au redémarrage de l'ordinateur</td></tr>
+        <tr><td>Dernier dossier Google Drive choisi pour joindre ou enregistrer un fichier</td><td>Rouvrir le sélecteur au même endroit</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Nom affiché et signature (facultatifs)</td><td>Les ajouter aux messages que vous envoyez</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Préférences d'affichage</td><td>Retrouver la taille de fenêtre et vos réglages (thème, disposition, notifications…)</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
       </tbody>
     </table>
-    <p>Vos e-mails eux-mêmes ne sont <strong>pas</strong> stockés par G-Desk : ils sont téléchargés depuis Google à la
-      demande et affichés, puis oubliés à la fermeture du logiciel.</p>
+    <p>Vos e-mails et vos fichiers Google Drive ne sont <strong>pas</strong> stockés par G-Desk : ils sont téléchargés
+      depuis Google à la demande et affichés, puis oubliés à la fermeture du logiciel (sauf les fichiers que vous
+      téléchargez vous-même à l'emplacement de votre choix).</p>
 
     <h3>3.3 Protection lors de la lecture</h3>
     <p>Les messages sont affichés sans exécuter de JavaScript. Les images et contenus hébergés à l'extérieur du message
@@ -102,15 +105,20 @@
       comme dans n'importe quel logiciel de messagerie.</p>
 
     <h2 id="google">4. Accès à votre compte Google</h2>
-    <p>G-Desk accède à votre messagerie par l'<a href="https://developers.google.com/workspace/gmail/api">API Gmail</a>,
+    <p>G-Desk accède à votre messagerie par l'<a href="https://developers.google.com/workspace/gmail/api">API Gmail</a>
+      et à vos fichiers par l'<a href="https://developers.google.com/workspace/drive/api">API Google Drive</a>,
       après votre autorisation explicite donnée sur la page de connexion de Google, dans votre navigateur. G-Desk ne
       voit jamais votre mot de passe.</p>
-    <p>L'autorisation demandée est <code>https://www.googleapis.com/auth/gmail.modify</code>. Elle sert exclusivement
-      aux fonctions que vous utilisez dans le logiciel :</p>
+    <p>Les autorisations demandées sont <code>https://www.googleapis.com/auth/gmail.modify</code> et
+      <code>https://www.googleapis.com/auth/drive</code>. Elles servent exclusivement aux fonctions que vous utilisez
+      dans le logiciel :</p>
     <ul>
       <li>lire la liste de vos dossiers, libellés et messages, et afficher les messages et pièces jointes ;</li>
       <li>modifier l'état des messages : lu / non lu, suivi, archivage, spam, corbeille ;</li>
-      <li>envoyer les messages que vous rédigez et enregistrer vos brouillons.</li>
+      <li>envoyer les messages que vous rédigez et enregistrer vos brouillons ;</li>
+      <li>parcourir et rechercher vos fichiers Google Drive, les ouvrir, les télécharger ou les joindre à un message ;</li>
+      <li>enregistrer dans Google Drive les pièces jointes et fichiers que vous choisissez d'y importer, créer des
+        dossiers, renommer, suivre ou placer dans la corbeille les éléments que vous désignez.</li>
     </ul>
     <p>Ces échanges se font directement entre votre ordinateur et les serveurs de Google, au moyen du client OAuth de
       <strong>votre</strong> projet Google Cloud. Google traite vos données en tant que responsable de traitement
@@ -120,8 +128,8 @@
     <p><strong>Utilisation limitée.</strong> L'utilisation et le transfert, par G-Desk, des informations reçues des API
       Google respectent la <a href="https://developers.google.com/terms/api-services-user-data-policy">politique de
       Google relative aux données utilisateur des services d'API</a>, y compris ses exigences d'utilisation limitée
-      (« Limited Use »). Ces données ne sont utilisées que pour fournir les fonctions de messagerie visibles dans
-      G-Desk. Elles ne sont jamais transférées à des tiers, ni utilisées pour de la publicité, ni lues par un humain,
+      (« Limited Use »). Ces données ne sont utilisées que pour fournir les fonctions de messagerie et de
+      gestion de fichiers visibles dans G-Desk. Elles ne sont jamais transférées à des tiers, ni utilisées pour de la publicité, ni lues par un humain,
       ni utilisées pour entraîner des modèles d'intelligence artificielle.</p>
     <p lang="en"><em>G-Desk's use and transfer to any other app of information received from Google APIs will adhere
       to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data

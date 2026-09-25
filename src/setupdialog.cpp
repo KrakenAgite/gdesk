@@ -21,12 +21,13 @@ SetupDialog::SetupDialog(const QString &clientId, const QString &clientSecret, Q
     auto *v = new QVBoxLayout(this);
 
     auto *help = new QLabel(
-        "<p>G-Desk utilise l'API officielle de Gmail. Google exige pour cela un « client OAuth » "
+        "<p>G-Desk utilise les API officielles de Gmail et de Google Drive. Google exige pour cela un « client OAuth » "
         "créé dans <b>votre propre</b> projet Google Cloud (gratuit, à faire une seule fois) :</p>"
         "<ol>"
         "<li>Ouvrez <a href='https://console.cloud.google.com/projectcreate'>console.cloud.google.com</a> "
         "et créez un projet (par ex. « G-Desk »).</li>"
         "<li>Activez <a href='https://console.cloud.google.com/apis/library/gmail.googleapis.com'>l'API Gmail</a> "
+        "et <a href='https://console.cloud.google.com/apis/library/drive.googleapis.com'>l'API Google Drive</a> "
         "pour ce projet.</li>"
         "<li>Dans <a href='https://console.cloud.google.com/auth/overview'>Google Auth Platform</a>, cliquez sur "
         "« Commencer » : nom de l'appli, votre e-mail, audience <b>Externe</b>. Dans « Branding », vous pouvez "

@@ -1,4 +1,6 @@
 #include "composer.h"
+#include "drivebrowser.h"
+#include "driveapi.h"
 #include "gmailapi.h"
 
 #include <QAbstractItemView>
@@ -19,6 +21,7 @@
 #include <QMessageBox>
 #include <QMimeDatabase>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -85,7 +88,24 @@ Composer::Composer(GmailApi *api, const QString &myAddress, const QString &signa
     bar->setMovable(false);
     bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_actions << bar->addAction(QIcon::fromTheme("mail-send"), "Envoyer", QKeySequence("Ctrl+Return"), this, &Composer::send);
-    m_actions << bar->addAction(QIcon::fromTheme("mail-attachment"), "Joindre…", this, &Composer::addFiles);
+    // Joindre : fichiers de l'ordinateur (clic) ou, par la flèche, de Google Drive
+    auto *attach = new QAction(QIcon::fromTheme("mail-attachment"), "Joindre…", this);
+    attach->setToolTip("Joindre des fichiers de l'ordinateur ou de Google Drive");
+    connect(attach, &QAction::triggered, this, &Composer::addFiles);
+    auto *attachMenu = new QMenu(this);
+    attachMenu->addAction(QIcon::fromTheme("document-open"), "Fichiers de l'ordinateur…", this, &Composer::addFiles);
+    m_driveActions << attachMenu->addAction(QIcon::fromTheme("folder-gdrive", QIcon::fromTheme("folder-cloud")),
+                                            "Fichiers de Google Drive…", this, &Composer::pickFromDrive);
+    m_driveActions << attachMenu->addAction(QIcon::fromTheme("insert-link"), "Lien vers un fichier Google Drive…", this,
+                                            &Composer::insertDriveLinks);
+    m_driveActions.first()->setObjectName("attachFromDrive");
+    for (QAction *a : std::as_const(m_driveActions))
+        a->setVisible(false);
+    attach->setMenu(attachMenu);
+    bar->addAction(attach);
+    if (auto *button = qobject_cast<QToolButton *>(bar->widgetForAction(attach)))
+        button->setPopupMode(QToolButton::MenuButtonPopup);
+    m_actions << attach;
     m_actions << bar->addAction(QIcon::fromTheme("document-save"), "Enregistrer le brouillon", QKeySequence::Save,
                                 this, [this] { saveDraft(); });
     bar->addWidget(buildEmojiButton());
@@ -306,6 +326,97 @@ void Composer::addFiles()
     }
 }
 
+void Composer::setDriveApi(DriveApi *drive)
+{
+    m_drive = drive;
+    for (QAction *a : std::as_const(m_driveActions))
+        a->setVisible(drive != nullptr);
+}
+
+void Composer::pickFromDrive()
+{
+    if (!m_drive)
+        return;
+    DrivePicker picker(m_drive, DrivePicker::Files, this);
+    if (picker.exec() == QDialog::Accepted)
+        attachFromDrive(picker.files());
+}
+
+void Composer::insertDriveLinks()
+{
+    if (!m_drive)
+        return;
+    DrivePicker picker(m_drive, DrivePicker::Files, this);
+    picker.setWindowTitle("Insérer un lien vers un fichier Google Drive");
+    picker.setAcceptText("Insérer le lien");
+    if (picker.exec() != QDialog::Accepted)
+        return;
+    for (const DriveFile &f : picker.files())
+        insertDriveLink(f);
+}
+
+void Composer::insertDriveLink(const DriveFile &file)
+{
+    m_body->insertPlainText(QString("%1 : %2\n").arg(file.name, file.webViewLink));
+    m_body->setFocus();
+    statusBar()->showMessage("Lien inséré. Les destinataires doivent avoir accès au fichier dans Google Drive.", 8000);
+}
+
+void Composer::attachFromDrive(const QList<DriveFile> &files)
+{
+    if (!m_drive)
+        return;
+    constexpr qint64 GmailLimit = 25 * 1024 * 1024;
+    for (const DriveFile &f : files) {
+        if (f.isFolder())
+            continue;
+        const bool exportable = !f.isGoogleFile() || !DriveApi::exportFormat(f.contentMimeType()).first.isEmpty();
+        if (!exportable) { // Formulaires, sites… : pas de fichier à joindre, seulement un lien
+            insertDriveLink(f);
+            continue;
+        }
+        if (f.size > GmailLimit) {
+            const auto answer = QMessageBox::question(
+                this, "Pièce jointe trop volumineuse",
+                QString("« %1 » (%2) dépasse la limite de 25 Mo de Gmail.\n\nInsérer plutôt un lien vers ce fichier ?")
+                    .arg(f.name, Mime::humanSize(f.size)));
+            if (answer == QMessageBox::Yes)
+                insertDriveLink(f);
+            continue;
+        }
+        ++m_driveDownloads;
+        updateDriveStatus();
+        QPointer<Composer> self(this);
+        m_drive->download(f, [self, f](const QByteArray &bytes, const QString &err) {
+            if (!self)
+                return;
+            --self->m_driveDownloads;
+            if (!err.isEmpty()) {
+                QMessageBox::warning(self, "Google Drive", QString("Impossible de joindre « %1 » :\n%2").arg(f.name, err));
+            } else {
+                Attachment a;
+                a.filename = DriveApi::downloadName(f);
+                a.mimeType = f.isGoogleFile() ? DriveApi::exportFormat(f.contentMimeType()).first : f.contentMimeType();
+                a.data = bytes;
+                a.size = bytes.size();
+                self->addAttachment(a);
+                self->m_body->document()->setModified(true); // à enregistrer ou envoyer avant de fermer
+            }
+            self->updateDriveStatus();
+        });
+    }
+}
+
+void Composer::updateDriveStatus()
+{
+    if (m_driveDownloads > 0)
+        statusBar()->showMessage(m_driveDownloads == 1 ? QString("Téléchargement d'une pièce jointe depuis Google Drive…")
+                                                       : QString("Téléchargement de %1 pièces jointes depuis Google Drive…")
+                                                             .arg(m_driveDownloads));
+    else if (statusBar()->currentMessage().contains("Google Drive…"))
+        statusBar()->clearMessage();
+}
+
 void Composer::addAttachment(const Attachment &a)
 {
     m_attachments << a;
@@ -350,6 +461,12 @@ void Composer::send()
     if (Mime::splitAddresses(m_to->text() + "," + m_cc->text() + "," + m_bcc->text()).isEmpty()) {
         QMessageBox::warning(this, "Envoyer", "Indiquez au moins un destinataire.");
         m_to->setFocus();
+        return;
+    }
+    if (m_driveDownloads > 0) {
+        QMessageBox::information(this, "Envoyer",
+                                 "Des pièces jointes sont encore en cours de téléchargement depuis Google Drive. "
+                                 "Patientez quelques instants.");
         return;
     }
     if (m_subject->text().trimmed().isEmpty()

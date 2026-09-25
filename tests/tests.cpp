@@ -1,5 +1,8 @@
 // Tests sans compte Google : MIME, connexion OAuth (jusqu'au serveur de Google) et visionneuse.
 #include "composer.h"
+#include "driveapi.h"
+#include "drivebrowser.h"
+#include "driveview.h"
 #include "gmailapi.h"
 #include "googleauth.h"
 #include "maillistdelegate.h"
@@ -25,6 +28,9 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <QToolBar>
+#include <QHeaderView>
+#include <QLabel>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
@@ -223,6 +229,169 @@ private:
                  + QByteArray::number(out.size()) + "\r\n\r\n" + out);
         s->disconnectFromHost();
     }
+};
+
+// Faux serveur Google Drive : liste, création, modification, envoi « resumable », téléchargement, export
+// Réponses et fichiers du faux serveur écrits en initialisation partielle ({statut, corps})
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
+class FakeDrive : public QObject
+{
+    Q_OBJECT
+public:
+    struct File {
+        QString id, name, mime, parent;
+        QByteArray data;
+        bool starred = false, trashed = false;
+    };
+    QTcpServer server;
+    QMap<QString, File> files;
+    QStringList queries;      // paramètre « q » des listes
+    bool denyScope = false;   // simule un jeton sans l'autorisation Drive
+    int sessions = 0;
+
+    FakeDrive()
+    {
+        server.listen(QHostAddress::LocalHost, 0);
+        connect(&server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket *s = server.nextPendingConnection()) {
+                connect(s, &QTcpSocket::readyRead, this, [this, s] { handle(s); });
+                connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
+            }
+        });
+    }
+    QString root() const { return QString("http://127.0.0.1:%1/").arg(server.serverPort()); }
+    QString api() const { return root() + "drive/v3/"; }
+    QString upload() const { return root() + "upload/drive/v3/"; }
+    QString add(const QString &name, const QString &mime, const QString &parent, const QByteArray &data = {})
+    {
+        const QString id = QString("f%1").arg(files.size() + 1);
+        files.insert(id, {id, name, mime, parent, data});
+        return id;
+    }
+    QStringList namesIn(const QString &parent) const
+    {
+        QStringList names;
+        for (const File &f : files)
+            if (f.parent == parent && !f.trashed)
+                names << f.name;
+        return names;
+    }
+
+private:
+    struct Reply {
+        int status = 200;
+        QByteArray body;
+        QByteArray type = "application/json";
+        QByteArray headers;
+    };
+    QJsonObject json(const File &f) const
+    {
+        QJsonObject o{{"id", f.id}, {"name", f.name}, {"mimeType", f.mime}, {"parents", QJsonArray{f.parent}},
+                      {"modifiedTime", "2026-09-20T10:00:00.000Z"}, {"starred", f.starred}, {"trashed", f.trashed},
+                      {"ownedByMe", true}, {"owners", QJsonArray{QJsonObject{{"displayName", "Moi"}}}},
+                      {"webViewLink", "https://drive.google.com/file/d/" + f.id},
+                      {"capabilities", QJsonObject{{"canRename", true}, {"canTrash", true}, {"canAddChildren", true}}}};
+        if (!f.mime.startsWith("application/vnd.google-apps."))
+            o.insert("size", QString::number(f.data.size()));
+        return o;
+    }
+    static Reply ok(const QJsonObject &o) { return {200, QJsonDocument(o).toJson(QJsonDocument::Compact)}; }
+
+    Reply route(const QByteArray &method, const QString &path, const QUrlQuery &q, const QByteArray &body,
+                const QByteArray &head)
+    {
+        if (denyScope)
+            return {403, R"({"error":{"code":403,"message":"Request had insufficient authentication scopes.",)"
+                         R"("status":"PERMISSION_DENIED","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}})"};
+        if (method == "GET" && path == "drive/v3/about")
+            return ok({{"storageQuota", QJsonObject{{"usage", "3221225472"}, {"limit", "16106127360"}}}});
+        if (method == "GET" && path == "drive/v3/files") {
+            const QString query = q.queryItemValue("q", QUrl::FullyDecoded);
+            queries << query;
+            const QRegularExpressionMatch parent = QRegularExpression("'([^']*)' in parents").match(query);
+            const bool foldersOnly = query.contains("mimeType = 'application/vnd.google-apps.folder'");
+            QJsonArray list;
+            for (const File &f : std::as_const(files)) {
+                if (parent.hasMatch() && f.parent != parent.captured(1))
+                    continue;
+                if (query.contains("starred = true") && !f.starred)
+                    continue;
+                if (f.trashed != query.contains("trashed = true"))
+                    continue;
+                if (foldersOnly && f.mime != DriveApi::FolderMime)
+                    continue;
+                list.append(json(f));
+            }
+            return ok({{"files", list}});
+        }
+        if (method == "POST" && path == "drive/v3/files") {
+            const QJsonObject b = QJsonDocument::fromJson(body).object();
+            const QString id = add(b.value("name").toString(), b.value("mimeType").toString(),
+                                   b.value("parents").toArray().first().toString());
+            return ok(json(files[id]));
+        }
+        if (method == "PATCH" && path.startsWith("drive/v3/files/")) {
+            File &f = files[path.section('/', 3, 3)];
+            const QJsonObject b = QJsonDocument::fromJson(body).object();
+            if (b.contains("name"))
+                f.name = b.value("name").toString();
+            if (b.contains("starred"))
+                f.starred = b.value("starred").toBool();
+            if (b.contains("trashed"))
+                f.trashed = b.value("trashed").toBool();
+            return ok(json(f));
+        }
+        if (method == "GET" && path.endsWith("/export")) {
+            const File &f = files[path.section('/', 3, 3)];
+            return {200, "EXPORT " + f.name.toUtf8() + " " + q.queryItemValue("mimeType", QUrl::FullyDecoded).toUtf8(),
+                    "application/octet-stream"};
+        }
+        if (method == "GET" && path.startsWith("drive/v3/files/") && q.queryItemValue("alt") == "media")
+            return {200, files[path.section('/', 3, 3)].data, "application/octet-stream"};
+        if (method == "POST" && path == "upload/drive/v3/files" && q.queryItemValue("uploadType") == "resumable") {
+            const QJsonObject meta = QJsonDocument::fromJson(body).object();
+            const QString session = QString::number(++sessions);
+            pending.insert(session, {{}, meta.value("name").toString(),
+                                     QString::fromUtf8(headerValue(head, "x-upload-content-type")),
+                                     meta.value("parents").toArray().first().toString()});
+            return {200, {}, "application/json", "Location: " + (root() + "upload/session/" + session).toUtf8() + "\r\n"};
+        }
+        if (method == "PUT" && path.startsWith("upload/session/")) {
+            const File meta = pending.take(path.section('/', 2, 2));
+            const QString id = add(meta.name, meta.mime, meta.parent == "root" ? "root" : meta.parent, body);
+            return ok(json(files[id]));
+        }
+        return {404, R"({"error":{"code":404,"message":"introuvable"}})"};
+    }
+    static QByteArray headerValue(const QByteArray &head, const QByteArray &name)
+    {
+        for (const QByteArray &line : head.split('\n'))
+            if (line.toLower().startsWith(name + ":"))
+                return line.mid(name.size() + 1).trimmed();
+        return {};
+    }
+
+    void handle(QTcpSocket *s)
+    {
+        QByteArray buf = s->property("buf").toByteArray() + s->readAll();
+        const int headerEnd = buf.indexOf("\r\n\r\n");
+        const int length = headerEnd < 0 ? 0 : headerValue(buf.left(headerEnd), "content-length").toInt();
+        if (headerEnd < 0 || buf.size() < headerEnd + 4 + length) {
+            s->setProperty("buf", buf);
+            return;
+        }
+        s->setProperty("buf", QByteArray());
+        const QByteArray head = buf.left(headerEnd);
+        const QList<QByteArray> requestLine = head.left(head.indexOf("\r\n")).split(' ');
+        const QUrl url("http://x" + QString::fromLatin1(requestLine.value(1)));
+        const Reply r = route(requestLine.value(0), url.path().mid(1), QUrlQuery(url), buf.mid(headerEnd + 4, length), head);
+        s->write("HTTP/1.1 " + QByteArray::number(r.status) + " X\r\nContent-Type: " + r.type
+                 + "\r\nConnection: close\r\n" + r.headers + "Content-Length: " + QByteArray::number(r.body.size())
+                 + "\r\n\r\n" + r.body);
+        s->disconnectFromHost();
+    }
+    QMap<QString, File> pending; // sessions d'envoi ouvertes
 };
 
 class Tests : public QObject
@@ -1280,6 +1449,373 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         QCOMPARE(watch.destroyed, 0);
         QVERIFY(!view->findChild<QWebEngineView *>()->isWindow());
         win.windowHandle()->removeEventFilter(&watch);
+    }
+    // Même régression par le vrai chemin : clic sur le premier message de la liste, avec une
+    // fenêtre enregistrée maximisée. Aucune autre fenêtre ne doit apparaître, même brièvement.
+    void noExtraWindowOnFirstClick()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 3; ++i)
+            gmail.add(QString("m%1").arg(i), {"INBOX"});
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        { // fenêtre enregistrée maximisée : restoreGeometry crée la fenêtre native dès le constructeur
+            QWidget w;
+            w.setWindowState(Qt::WindowMaximized);
+            QSettings("gdesk", "gdesk").setValue("geometry", w.saveGeometry());
+        }
+
+        MainWindow win;
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        QTreeWidget *list = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                list = t;
+        win.folderMenu("INBOX")->actions().first()->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.metadataRequests.size(), 3, 10000);
+        QTest::qWait(200);
+
+        struct Watch : QObject {
+            QWindow *main = nullptr;
+            int destroyed = 0;
+            QStringList others; // fenêtres de premier niveau affichées en dehors de la principale
+            bool eventFilter(QObject *o, QEvent *e) override
+            {
+                auto *w = qobject_cast<QWindow *>(o);
+                if (!w)
+                    return false;
+                if (w == main && e->type() == QEvent::PlatformSurface
+                    && static_cast<QPlatformSurfaceEvent *>(e)->surfaceEventType()
+                           == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed)
+                    ++destroyed;
+                if (w != main && !w->parent() && (e->type() == QEvent::Expose || e->type() == QEvent::Show)
+                    && w->isVisible() && w->type() != Qt::ToolTip && w->type() != Qt::Popup)
+                    others << QString("%1 (%2)").arg(w->objectName(), QString::number(e->type()));
+                return false;
+            }
+        } watch;
+        watch.main = win.windowHandle();
+        qApp->installEventFilter(&watch);
+
+        const QRect r = list->visualItemRect(list->topLevelItem(0));
+        QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, r.center());
+        auto *view = win.findChild<MessageView *>();
+        QTRY_VERIFY_WITH_TIMEOUT(view->hasEngine(), 10000);
+        QSignalSpy loaded(view->findChild<QWebEngineView *>(), &QWebEngineView::loadFinished);
+        loaded.wait(15000);
+        QTest::qWait(500);
+        qApp->removeEventFilter(&watch);
+        QCOMPARE(watch.destroyed, 0);
+        QVERIFY2(watch.others.isEmpty(), qPrintable(watch.others.join(", ")));
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void driveHelpers()
+    {
+        DriveFile doc;
+        doc.name = "Budget";
+        doc.mimeType = "application/vnd.google-apps.spreadsheet";
+        QVERIFY(doc.isGoogleFile() && !doc.isFolder());
+        QCOMPARE(DriveApi::downloadName(doc), QString("Budget.xlsx"));
+        QCOMPARE(DriveApi::exportFormat(doc.mimeType).second, QString("xlsx"));
+        QVERIFY(DriveApi::exportFormat("application/vnd.google-apps.form").first.isEmpty()); // non exportable
+        DriveFile pdf;
+        pdf.name = "Facture.pdf";
+        pdf.mimeType = "application/pdf";
+        QCOMPARE(DriveApi::downloadName(pdf), QString("Facture.pdf"));
+        QVERIFY(!pdf.isGoogleFile());
+        DriveFile shortcut; // raccourci vers un dossier
+        shortcut.mimeType = "application/vnd.google-apps.shortcut";
+        shortcut.targetMimeType = DriveApi::FolderMime;
+        QVERIFY(shortcut.isFolder());
+
+        // Apostrophes et barres obliques échappées dans les requêtes
+        QCOMPARE(DriveApi::searchQuery("l'été"), QString("(name contains 'l\\'été' or fullText contains 'l\\'été') and trashed = false"));
+        QCOMPARE(DriveApi::folderQuery("root", true),
+                 QString("'root' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'"));
+
+        const QJsonObject scope = QJsonDocument::fromJson(
+            R"({"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"reason":"insufficientPermissions"}]}})").object();
+        const QJsonObject disabled = QJsonDocument::fromJson(
+            R"({"error":{"code":403,"message":"Google Drive API has not been used in project 1 before or it is disabled.","errors":[{"reason":"accessNotConfigured"}]}})").object();
+        QVERIFY(DriveApi::needsConsent(scope) && !DriveApi::apiDisabled(scope));
+        QVERIFY(DriveApi::apiDisabled(disabled) && !DriveApi::needsConsent(disabled));
+        QVERIFY(QString(GoogleAuth::Scope).contains("https://www.googleapis.com/auth/drive"));
+        QVERIFY(QString(GoogleAuth::Scope).contains("gmail.modify"));
+    }
+
+    void driveUploadDownload()
+    {
+        FakeDrive drive;
+        DriveApi::setBaseUrlsForTesting(drive.api(), drive.upload());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QNetworkAccessManager nam;
+        GoogleAuth auth(&nam);
+        DriveApi api(&auth, &nam);
+        QSignalSpy changed(&api, &DriveApi::filesChanged);
+
+        // Envoi en deux temps (session puis contenu), ici une pièce jointe gardée en mémoire
+        QByteArray content;
+        for (int i = 0; i < 20000; ++i)
+            content += QByteArray::number(i) + ",";
+        QJsonObject created;
+        QString error = "attente";
+        qint64 lastProgress = 0;
+        api.uploadData("relevé.csv", "text/csv", content, "root",
+                       [&](const QJsonObject &o, const QString &e) { created = o; error = e; },
+                       [&](qint64 done, qint64) { lastProgress = done; });
+        QTRY_VERIFY_WITH_TIMEOUT(error != "attente", 10000);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const DriveFile uploaded = DriveFile::fromJson(created);
+        QCOMPARE(uploaded.name, QString("relevé.csv"));
+        QCOMPARE(drive.files[uploaded.id].data, content);
+        QCOMPARE(drive.files[uploaded.id].mime, QString("text/csv"));
+        QCOMPARE(lastProgress, qint64(content.size()));
+        QCOMPARE(changed.size(), 1);
+
+        // Téléchargement en mémoire et vers un fichier
+        QByteArray downloaded;
+        error = "attente";
+        api.download(uploaded, [&](const QByteArray &d, const QString &e) { downloaded = d; error = e; });
+        QTRY_VERIFY_WITH_TIMEOUT(error != "attente", 10000);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(downloaded, content);
+        QTemporaryDir dir;
+        error = "attente";
+        api.downloadToFile(uploaded, dir.filePath("copie.csv"), [&](const QJsonObject &, const QString &e) { error = e; });
+        QTRY_VERIFY_WITH_TIMEOUT(error != "attente", 10000);
+        QFile copy(dir.filePath("copie.csv"));
+        QVERIFY(copy.open(QIODevice::ReadOnly));
+        QCOMPARE(copy.readAll(), content);
+
+        // Document Google : exporté au format Office
+        DriveFile doc = DriveFile::fromJson(QJsonObject{{"id", drive.add("Notes", "application/vnd.google-apps.document", "root")},
+                                                        {"name", "Notes"}, {"mimeType", "application/vnd.google-apps.document"}});
+        error = "attente";
+        api.download(doc, [&](const QByteArray &d, const QString &e) { downloaded = d; error = e; });
+        QTRY_VERIFY_WITH_TIMEOUT(error != "attente", 10000);
+        QCOMPARE(downloaded, QByteArray("EXPORT Notes application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+
+        // Jeton sans l'autorisation Drive : erreur reconnue
+        drive.denyScope = true;
+        QJsonObject details;
+        error = "attente";
+        api.listFiles(DriveApi::placeQuery(DriveApi::MyDrive), {}, {}, 10,
+                      [&](const QJsonObject &o, const QString &e) { details = o; error = e; });
+        QTRY_VERIFY_WITH_TIMEOUT(error != "attente", 10000);
+        QVERIFY(DriveApi::needsConsent(details));
+        QVERIFY(error.contains("autorisation"));
+
+        DriveApi::setBaseUrlsForTesting("https://www.googleapis.com/drive/v3/", "https://www.googleapis.com/upload/drive/v3/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+
+    void driveView()
+    {
+        FakeDrive drive;
+        const QString factures = drive.add("Factures", DriveApi::FolderMime, "root");
+        drive.add("Vide", DriveApi::FolderMime, "root");
+        drive.add("zèbre.pdf", "application/pdf", "root", "PDF");
+        drive.add("Budget", "application/vnd.google-apps.spreadsheet", "root");
+        drive.add("Facture 2.pdf", "application/pdf", factures, "F2");
+        drive.add("Facture 10.pdf", "application/pdf", factures, "F10");
+        DriveApi::setBaseUrlsForTesting(drive.api(), drive.upload());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QNetworkAccessManager nam;
+        GoogleAuth auth(&nam);
+        DriveApi api(&auth, &nam);
+
+        DriveView view(&api);
+        view.resize(1100, 650);
+        view.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+        view.activate();
+        DriveBrowser *browser = view.browser();
+        QTreeWidget *list = browser->list();
+        auto names = [&] {
+            QStringList n;
+            for (int i = 0; i < list->topLevelItemCount(); ++i)
+                n << list->topLevelItem(i)->data(0, DriveBrowser::FileRole).value<DriveFile>().name;
+            return n;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 4, 10000);
+        QVERIFY(drive.queries.last().startsWith("'root' in parents"));
+        QVERIFY(browser->canAddHere());
+        const QList<QLabel *> quota = view.findChildren<QLabel *>();
+        QTRY_VERIFY_WITH_TIMEOUT(std::any_of(quota.begin(), quota.end(),
+                                             [](QLabel *l) { return l->text().contains("utilisés sur"); }), 10000);
+
+        // Tri par nom : dossiers d'abord, puis ordre naturel (2 avant 10)
+        list->header()->sectionClicked(DriveBrowser::NameColumn);
+        QCOMPARE(names(), (QStringList{"Factures", "Vide", "Budget", "zèbre.pdf"}));
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            view.grab().save(out + "/drive-view.png");
+
+        // Ouverture d'un dossier (double-clic / Entrée)
+        emit list->itemActivated(list->topLevelItem(0), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 2, 10000);
+        list->header()->sectionClicked(DriveBrowser::NameColumn);
+        QCOMPARE(names(), (QStringList{"Facture 2.pdf", "Facture 10.pdf"}));
+        QCOMPARE(browser->currentFolder().id, factures);
+
+        // Import (comme un glisser-déposer) dans le dossier ouvert
+        QTemporaryDir dir;
+        QFile local(dir.filePath("scan.png"));
+        QVERIFY(local.open(QIODevice::WriteOnly));
+        local.write("PNG");
+        local.close();
+        view.uploadPaths({local.fileName()}, browser->currentFolder());
+        QTRY_VERIFY_WITH_TIMEOUT(drive.namesIn(factures).contains("scan.png"), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 3, 10000); // la liste se met à jour seule
+
+        // Mise à la corbeille (Suppr)
+        list->clearSelection();
+        for (int i = 0; i < list->topLevelItemCount(); ++i)
+            if (list->topLevelItem(i)->text(0) == "scan.png")
+                list->topLevelItem(i)->setSelected(true);
+        auto *trash = view.findChild<QAction *>("driveTrash");
+        QVERIFY(trash && trash->isEnabled());
+        trash->trigger();
+        QCOMPARE(list->topLevelItemCount(), 2);
+        QTRY_VERIFY_WITH_TIMEOUT(!drive.namesIn(factures).contains("scan.png"), 10000);
+
+        // Retour à Mon Drive puis dossier vide
+        browser->goUp();
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 4, 10000);
+        for (int i = 0; i < list->topLevelItemCount(); ++i)
+            if (list->topLevelItem(i)->text(0) == "Vide")
+                emit list->itemActivated(list->topLevelItem(i), 0);
+        auto *notice = view.findChild<QLabel *>("driveNotice");
+        QTRY_VERIFY_WITH_TIMEOUT(notice->isVisible() && notice->text().contains("Ce dossier est vide"), 10000);
+
+        // Jeton sans l'autorisation Drive : message et bouton pour la donner
+        drive.denyScope = true;
+        QSignalSpy authorize(&api, &DriveApi::authorizationRequested);
+        browser->reload();
+        auto *action = view.findChild<QPushButton *>("driveNoticeAction");
+        QTRY_VERIFY_WITH_TIMEOUT(action->isVisible() && notice->text().contains("pas encore accès"), 10000);
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            view.grab().save(out + "/drive-consent.png");
+        action->click();
+        QCOMPARE(authorize.size(), 1);
+
+        DriveApi::setBaseUrlsForTesting("https://www.googleapis.com/drive/v3/", "https://www.googleapis.com/upload/drive/v3/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+
+    void drivePickerAndComposer()
+    {
+        FakeDrive drive;
+        const QString archives = drive.add("Archives", DriveApi::FolderMime, "root");
+        const QString pdf = drive.add("devis.pdf", "application/pdf", "root", "DEVIS");
+        drive.add("Planning", "application/vnd.google-apps.spreadsheet", "root");
+        DriveApi::setBaseUrlsForTesting(drive.api(), drive.upload());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        QNetworkAccessManager nam;
+        GoogleAuth auth(&nam);
+        DriveApi api(&auth, &nam);
+
+        // Choix d'un dossier : seuls les dossiers sont listés ; l'emplacement est mémorisé
+        {
+            DrivePicker picker(&api, DrivePicker::Folder);
+            picker.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&picker));
+            QTreeWidget *list = picker.findChild<QTreeWidget *>("driveList");
+            QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 1, 10000);
+            QCOMPARE(picker.folder().id, QString("root"));
+            emit list->itemActivated(list->topLevelItem(0), 0);
+            QTRY_COMPARE_WITH_TIMEOUT(picker.folder().id, archives, 10000);
+            if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty()) {
+                QTest::qWait(300); // fil d'Ariane et contenu du dossier affichés
+                picker.grab().save(out + "/drive-picker-folder.png");
+            }
+            picker.accept();
+            QCOMPARE(picker.result(), int(QDialog::Accepted));
+        }
+        {
+            DrivePicker picker(&api, DrivePicker::Folder);
+            QTRY_COMPARE_WITH_TIMEOUT(picker.folder().id, archives, 10000); // rouvert au même endroit
+        }
+
+        // Rédaction : joindre un PDF et une feuille Google (exportée en .xlsx)
+        Composer c(nullptr, "moi@gmail.com", {}, {});
+        c.prepare(Composer::New);
+        c.setDriveApi(&api);
+        QVERIFY(c.findChild<QAction *>("attachFromDrive")->isVisible());
+        QList<DriveFile> files;
+        for (const DriveFile &f : {DriveFile::fromJson(QJsonObject{{"id", pdf}, {"name", "devis.pdf"}, {"mimeType", "application/pdf"}, {"size", "5"}}),
+                                   DriveFile::fromJson(QJsonObject{{"id", "f3"}, {"name", "Planning"}, {"mimeType", "application/vnd.google-apps.spreadsheet"}})})
+            files << f;
+        c.attachFromDrive(files);
+        auto *attachments = c.findChild<QListWidget *>();
+        QTRY_COMPARE_WITH_TIMEOUT(attachments->count(), 2, 10000);
+        QStringList labels;
+        for (int i = 0; i < attachments->count(); ++i)
+            labels << attachments->item(i)->text();
+        labels.sort();
+        QVERIFY2(labels[0].startsWith("Planning.xlsx") && labels[1].startsWith("devis.pdf"), qPrintable(labels.join(" | ")));
+
+        DriveApi::setBaseUrlsForTesting("https://www.googleapis.com/drive/v3/", "https://www.googleapis.com/upload/drive/v3/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+
+    void navigationRail()
+    {
+        FakeDrive drive;
+        drive.add("Photos", DriveApi::FolderMime, "root");
+        DriveApi::setBaseUrlsForTesting(drive.api(), drive.upload());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        MainWindow win;
+        win.resize(1200, 750);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+
+        auto *rail = win.findChild<QToolBar *>("navigationRail");
+        QVERIFY(rail);
+        QAction *mail = nullptr, *driveAction = nullptr;
+        for (QAction *a : rail->actions()) {
+            if (a->text() == "Courrier")
+                mail = a;
+            if (a->text() == "Drive")
+                driveAction = a;
+        }
+        QVERIFY(mail && driveAction && mail->isChecked());
+        QAction *refresh = nullptr;
+        for (QAction *a : win.actions())
+            if (a->text() == "Actualiser")
+                refresh = a;
+        QVERIFY(refresh && refresh->isEnabled());
+        QVERIFY(!win.findChild<DriveView *>()); // créée seulement au premier affichage
+
+        driveAction->trigger();
+        auto *view = win.findChild<DriveView *>();
+        QVERIFY(view && view->isVisible());
+        QVERIFY(driveAction->isChecked());
+        QVERIFY(!refresh->isEnabled()); // raccourcis du courrier inactifs dans Drive
+        QTRY_COMPARE_WITH_TIMEOUT(view->browser()->list()->topLevelItemCount(), 1, 10000);
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            win.grab().save(out + "/rail-drive.png");
+
+        mail->trigger();
+        QVERIFY(!view->isVisible());
+        QVERIFY(refresh->isEnabled());
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            win.grab().save(out + "/rail-mail.png");
+
+        DriveApi::setBaseUrlsForTesting("https://www.googleapis.com/drive/v3/", "https://www.googleapis.com/upload/drive/v3/");
+        GoogleAuth::setAccessTokenForTesting({});
     }
 };
 

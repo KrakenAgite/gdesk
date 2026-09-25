@@ -20,6 +20,8 @@
       <li xml:lang="fr">Lecture HTML protégée : pas de JavaScript, images distantes bloquées par défaut</li>
       <li>Compose, reply, forward, attachments, drafts and Gmail search</li>
       <li xml:lang="fr">Rédaction, réponse, transfert, pièces jointes, brouillons et recherche Gmail</li>
+      <li>Google Drive: browse, open, download and upload files, attach Drive files to messages and save attachments to Drive</li>
+      <li xml:lang="fr">Google Drive : parcourir, ouvrir, télécharger et importer des fichiers, joindre des fichiers Drive aux messages et enregistrer les pièces jointes dans Drive</li>
       <li>Plasma notifications, unread badge and KWallet integration</li>
       <li xml:lang="fr">Notifications Plasma, pastille de non-lus et intégration à KWallet</li>
       <li>Light or dark theme, adjustable density and layout, signature</li>
@@ -48,6 +50,13 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.4.0" date="2026-09-25">
+      <description>
+        <p>Google Drive: a navigation bar on the left switches between mail and Drive (Ctrl+1 / Ctrl+2). Browse My Drive, recent, starred, shared and trashed files, search, open, download, upload (also by drag and drop), create folders, rename, star, trash, and see the storage used.</p>
+        <p>Attach Drive files to a message (Google Docs, Sheets and Slides are exported to Office formats; a link is offered above 25 MB) and save any attachment to Drive. G-Desk asks once for access to Google Drive.</p>
+        <p>Fix: the window no longer flashes when the first message is opened in a maximized window.</p>
+      </description>
+    </release>
     <release version="2.3.1" date="2026-09-25">
       <description>
         <p>Performance: the web engine starts only when a message is displayed and is released when the window is hidden; new mail is inserted without reloading the list; fewer and smaller requests to Gmail; lighter drawing of the list and sidebar.</p>

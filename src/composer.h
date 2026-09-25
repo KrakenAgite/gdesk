@@ -6,6 +6,8 @@
 #include <QPointer>
 #include <functional>
 
+class DriveApi;
+struct DriveFile;
 class GmailApi;
 class QCompleter;
 class QListWidget;
@@ -40,6 +42,9 @@ public:
     // Préremplit la fenêtre (signature, et pour une réponse ou un transfert, le message d'origine)
     void prepare(Mode mode, const MailMessage &original = {});
     void prepareMailto(const QUrl &mailto);
+    // Google Drive : sans lui, les commandes « Drive » du bouton Joindre sont masquées
+    void setDriveApi(DriveApi *drive);
+    void attachFromDrive(const QList<DriveFile> &files); // télécharge et joint (ou propose un lien si > 25 Mo)
 
 signals:
     void sent();
@@ -52,6 +57,10 @@ private:
     void send();
     void saveDraft(std::function<void()> then = {});
     void addFiles();
+    void pickFromDrive();
+    void insertDriveLinks();
+    void insertDriveLink(const DriveFile &file);
+    void updateDriveStatus();
     void addAttachment(const Attachment &a);
     void setBusy(bool busy, const QString &status = {});
     QString signatureBlock() const;
@@ -59,6 +68,9 @@ private:
     void insertEmoji(const QString &emoji);
 
     GmailApi *m_api;
+    DriveApi *m_drive = nullptr;
+    QList<QAction *> m_driveActions;
+    int m_driveDownloads = 0; // pièces jointes en cours de téléchargement depuis Drive
     QString m_myAddress, m_signature, m_threadId, m_draftId;
     QString m_inReplyTo, m_references;
     AddressEdit *m_to, *m_cc, *m_bcc;

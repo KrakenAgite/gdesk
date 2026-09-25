@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "drivebrowser.h"
+#include "driveview.h"
 #include "gmailapi.h"
 #include "maillistdelegate.h"
 #include "googleauth.h"
@@ -8,6 +10,7 @@
 #include "sidebar.h"
 #include "theme.h"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -48,8 +51,19 @@ MainWindow::MainWindow()
     : m_settings("gdesk", "gdesk"),
       m_nam(new QNetworkAccessManager(this))
 {
+    // Le moteur web dessine via la carte graphique (RHI). L'ajouter à une fenêtre déjà affichée
+    // oblige Qt à détruire puis recréer la fenêtre : elle clignotait à l'ouverture du premier
+    // message. Ce minuscule composant RHI caché prépare la fenêtre dès sa création (≈ 5 Mo,
+    // contre ≈ 90 Mo pour un moteur web démarré en permanence). Il doit exister avant tout ce qui
+    // crée la fenêtre native, comme restoreGeometry() d'une fenêtre enregistrée maximisée.
+    auto *rhiSurface = new QRhiWidget(this);
+    rhiSurface->setObjectName("rhiSurface");
+    rhiSurface->setFixedSize(1, 1);
+    rhiSurface->hide();
+
     m_auth = new GoogleAuth(m_nam, this);
     m_api = new GmailApi(m_auth, m_nam, this);
+    m_drive = new DriveApi(m_auth, m_nam, this);
     m_baseIcon = QIcon::fromTheme("gdesk", QIcon(":/gdesk.svg"));
     setWindowTitle("G-Desk");
     setWindowIcon(m_baseIcon);
@@ -57,19 +71,10 @@ MainWindow::MainWindow()
     if (m_settings.contains("geometry"))
         restoreGeometry(m_settings.value("geometry").toByteArray());
 
-    // Le moteur web dessine via la carte graphique (RHI). L'ajouter à une fenêtre déjà affichée
-    // oblige Qt à détruire puis recréer la fenêtre : elle clignotait à l'ouverture du premier
-    // message. Ce minuscule composant RHI caché prépare la fenêtre dès sa création (≈ 5 Mo,
-    // contre ≈ 90 Mo pour un moteur web démarré en permanence).
-    auto *rhiSurface = new QRhiWidget(this);
-    rhiSurface->setObjectName("rhiSurface");
-    rhiSurface->setFixedSize(1, 1);
-    rhiSurface->hide();
-
     buildActions();
     m_pages = new QStackedWidget;
     m_pages->addWidget(buildLoginPage());
-    m_pages->addWidget(buildMailPage());
+    m_pages->addWidget(buildConnectedPage());
     setCentralWidget(m_pages);
     setupTray();
 
@@ -91,6 +96,13 @@ MainWindow::MainWindow()
     connect(m_auth, &GoogleAuth::loginFailed, this, [this](const QString &err) {
         showLoginPage("La connexion a échoué : " + err);
         bringToFront();
+    });
+    // Vue Drive ou sélecteur sans l'autorisation Drive (compte connecté avant la 2.4) : nouveau consentement
+    connect(m_drive, &DriveApi::authorizationRequested, this, [this] {
+        QTimer::singleShot(0, this, [this] { // après la fermeture éventuelle du sélecteur
+            bringToFront();
+            startLogin();
+        });
     });
     connect(m_auth, &GoogleAuth::sessionExpired, this, [this] {
         m_pollTimer->stop();
@@ -142,6 +154,9 @@ void MainWindow::buildActions()
         loadLabels();
         reloadList(m_openId);
     });
+
+    m_mailOnlyActions = {m_actReply, m_actReplyAll, m_actForward, m_actArchive, m_actDelete, m_actRestore,
+                         m_actSpam, m_actRead, m_actStar, m_actRefresh};
 
     auto *settings = new QAction(QIcon::fromTheme("configure"), "Paramètres…", this);
     settings->setShortcut(QKeySequence("Ctrl+,"));
@@ -203,6 +218,86 @@ QWidget *MainWindow::buildLoginPage()
     return page;
 }
 
+QWidget *MainWindow::buildConnectedPage()
+{
+    auto *page = new QWidget;
+    auto *h = new QHBoxLayout(page);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(0);
+
+    // Barre de navigation verticale, comme dans Kontact : Courrier, Drive… et les paramètres en bas
+    m_rail = new QToolBar("Navigation");
+    m_rail->setObjectName("navigationRail");
+    m_rail->setOrientation(Qt::Vertical);
+    m_rail->setMovable(false);
+    m_rail->setFloatable(false);
+    m_rail->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    m_rail->setIconSize(QSize(32, 32));
+    const QPixmap mailFallback = tintedIcon(folderIcon("inbox"), 32, palette().color(QPalette::WindowText), devicePixelRatioF());
+    const QPixmap driveFallback = tintedIcon(folderIcon("drive"), 32, palette().color(QPalette::WindowText), devicePixelRatioF());
+    auto *group = new QActionGroup(this);
+    m_railMail = m_rail->addAction(QIcon::fromTheme("internet-mail", QIcon::fromTheme("mail-message", QIcon(mailFallback))),
+                                   "Courrier");
+    m_railMail->setShortcut(QKeySequence("Ctrl+1"));
+    m_railMail->setToolTip("Courrier (Ctrl+1)");
+    m_railDrive = m_rail->addAction(QIcon::fromTheme("folder-gdrive", QIcon::fromTheme("folder-cloud", QIcon(driveFallback))),
+                                    "Drive");
+    m_railDrive->setShortcut(QKeySequence("Ctrl+2"));
+    m_railDrive->setToolTip("Google Drive (Ctrl+2)");
+    for (QAction *a : {m_railMail, m_railDrive}) {
+        a->setCheckable(true);
+        group->addAction(a);
+    }
+    m_railMail->setChecked(true);
+    connect(m_railMail, &QAction::triggered, this, [this] { showView(false); });
+    connect(m_railDrive, &QAction::triggered, this, [this] { showView(true); });
+    auto *spacer = new QWidget;
+    spacer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    m_rail->addWidget(spacer);
+    QAction *settings = m_rail->addAction(QIcon::fromTheme("preferences-system", QIcon::fromTheme("configure")),
+                                          "Paramètres", this, &MainWindow::openSettings);
+    settings->setToolTip("Paramètres (Ctrl+,)");
+    for (QAction *a : {m_railMail, m_railDrive, settings})
+        if (QWidget *w = m_rail->widgetForAction(a)) {
+            w->setMinimumWidth(76);
+            w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        }
+    h->addWidget(m_rail);
+    auto *line = new QFrame;
+    line->setFrameShape(QFrame::VLine);
+    line->setFrameShadow(QFrame::Sunken);
+    h->addWidget(line);
+
+    m_views = new QStackedWidget;
+    m_mailPage = buildMailPage();
+    m_views->addWidget(m_mailPage);
+    h->addWidget(m_views, 1);
+    return page;
+}
+
+void MainWindow::showView(bool drive)
+{
+    if (drive && !m_driveView) {
+        m_driveView = new DriveView(m_drive);
+        connect(m_driveView, &DriveView::statusMessage, this,
+                [this](const QString &text, int timeout) { statusBar()->showMessage(text, timeout); });
+        connect(m_driveView, &DriveView::sendByMailRequested, this, &MainWindow::composeWithDriveFiles);
+        m_views->addWidget(m_driveView);
+    }
+    (drive ? m_railDrive : m_railMail)->setChecked(true);
+    m_views->setCurrentWidget(drive ? static_cast<QWidget *>(m_driveView) : m_mailPage);
+    // Les raccourcis du courrier (Suppr, A, S…) ne doivent pas agir sur les messages depuis Drive
+    for (QAction *a : std::as_const(m_mailOnlyActions))
+        a->setEnabled(!drive);
+    statusBar()->clearMessage();
+    if (drive) {
+        m_driveView->activate();
+    } else {
+        updateActions();
+        m_list->setFocus();
+    }
+}
+
 QWidget *MainWindow::buildMailPage()
 {
     auto *page = new QWidget;
@@ -257,6 +352,7 @@ QWidget *MainWindow::buildMailPage()
         m_search->selectAll();
     });
     addAction(focusSearch);
+    m_mailOnlyActions << checkAll << uncheck << focusSearch;
     bar->addWidget(m_search);
 
     v->addWidget(bar);
@@ -363,6 +459,7 @@ QWidget *MainWindow::buildMailPage()
     m_view = new MessageView;
     connect(m_view, &MessageView::saveAttachmentRequested, this, &MainWindow::saveAttachment);
     connect(m_view, &MessageView::openAttachmentRequested, this, &MainWindow::openAttachment);
+    connect(m_view, &MessageView::saveAttachmentToDriveRequested, this, &MainWindow::saveAttachmentToDrive);
     connect(m_view, &MessageView::mailtoClicked, this, &MainWindow::composeMailto);
     connect(m_view, &MessageView::remoteContentAllowed, this, [this](bool always) {
         MailMessage m = m_view->message();
@@ -452,6 +549,8 @@ void MainWindow::setupTray()
 
 void MainWindow::updateActions()
 {
+    if (m_views && m_views->currentWidget() != m_mailPage)
+        return; // vue Drive : actions du courrier désactivées (voir showView)
     const int selected = m_list ? int(targetItems().size()) : 0;
     const bool single = selected == 1 && !m_view->message().id.isEmpty();
     const bool inTrash = m_currentLabel == "TRASH" && m_query.isEmpty();
@@ -620,8 +719,13 @@ void MainWindow::onLoggedIn()
             showLoginPage("Impossible de contacter Gmail : " + err);
             return;
         }
-        m_email = profile.value("emailAddress").toString();
+        const QString email = profile.value("emailAddress").toString();
+        if (!m_email.isEmpty() && email != m_email)
+            clearMailbox(); // nouvelle autorisation donnée avec un autre compte
+        m_email = email;
         m_accountChip->setEmail(m_email);
+        if (m_driveView)
+            m_driveView->reloadAll();
         m_pages->setCurrentIndex(1);
         m_unreadSeeded = false;
         m_knownUnread.clear();
@@ -658,6 +762,12 @@ void MainWindow::clearMailbox()
     m_knownUnread.clear();
     m_unreadSeeded = false;
     setUnread(0);
+    if (m_driveView) { // les fichiers du compte ne restent pas affichés
+        showView(false);
+        m_views->removeWidget(m_driveView);
+        m_driveView->deleteLater();
+        m_driveView = nullptr;
+    }
 }
 
 void MainWindow::switchAccount()
@@ -1130,9 +1240,41 @@ void MainWindow::openAttachment(int index)
     });
 }
 
-// =============================================================================
-//  Actions
-// =============================================================================
+void MainWindow::saveAttachmentToDrive(int index)
+{
+    const Attachment a = m_view->message().attachments.value(index);
+    const QString name = a.filename.isEmpty() ? QString("piece-jointe") : a.filename;
+    DrivePicker picker(m_drive, DrivePicker::Folder, this);
+    picker.setWindowTitle(QString("Enregistrer « %1 » dans Google Drive").arg(name));
+    if (picker.exec() != QDialog::Accepted)
+        return;
+    const DriveFile folder = picker.folder();
+    fetchAttachment(index, [this, a, name, folder](const QByteArray &bytes) {
+        statusBar()->showMessage(QString("Enregistrement de « %1 » dans Google Drive…").arg(name));
+        m_drive->uploadData(name, a.mimeType, bytes, folder.contentId(),
+            [this, name, folder](const QJsonObject &, const QString &err) {
+                if (!err.isEmpty())
+                    showError("Enregistrement dans Google Drive impossible", err);
+                else
+                    statusBar()->showMessage(QString("« %1 » enregistré dans Google Drive (%2).").arg(name, folder.name), 6000);
+            },
+            [this, name](qint64 done, qint64 total) {
+                statusBar()->showMessage(QString("Enregistrement de « %1 » dans Google Drive… %2 %")
+                                             .arg(name).arg(done * 100 / total));
+            });
+    });
+}
+
+void MainWindow::composeWithDriveFiles(const QList<DriveFile> &files)
+{
+    if (m_email.isEmpty() || files.isEmpty())
+        return;
+    Composer *c = newComposer();
+    c->prepare(Composer::New);
+    c->show();
+    c->attachFromDrive(files);
+}
+
 // =============================================================================
 //  Sélection par cases à cocher
 // =============================================================================
@@ -1458,6 +1600,7 @@ Composer *MainWindow::newComposer()
     const QString name = m_settings.value("sender_name").toString().trimmed();
     const QString from = name.isEmpty() ? m_email : QString("%1 <%2>").arg(name, m_email);
     auto *c = new Composer(m_api, from, m_settings.value("signature").toString(), m_knownAddresses, this);
+    c->setDriveApi(m_drive);
     connect(c, &Composer::sent, this, [this] {
         statusBar()->showMessage("Message envoyé.", 5000);
         if (m_currentLabel == "SENT" || m_currentLabel == "DRAFT")
@@ -1923,7 +2066,8 @@ void MainWindow::about()
         "<a href='https://github.com/KrakenAgite/gdesk'>Code source</a> — Licence MIT, © 2026 Gabriel Arthus</p>"
         "<p>Gmail et Google sont des marques de Google LLC. G-Desk n'est ni affilié à Google ni approuvé par Google.</p>"
         "<p>Raccourcis : Ctrl+N nouveau · Ctrl+R répondre · Ctrl+Maj+R répondre à tous · Ctrl+L transférer · "
-        "A archiver · Suppr supprimer · S suivi · M lu/non lu · J spam · Ctrl+F rechercher · F5 actualiser</p>");
+        "A archiver · Suppr supprimer · S suivi · M lu/non lu · J spam · Ctrl+F rechercher · F5 actualiser · "
+        "Ctrl+1 courrier · Ctrl+2 Google Drive</p>");
 }
 
 void MainWindow::showError(const QString &what, const QString &err)

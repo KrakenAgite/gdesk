@@ -17,6 +17,11 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
 - Cases à cocher sur les messages et barre de sélection (Tous, Lus, Non lus, Suivis… ; Maj+clic pour une plage) :
   lu / non lu, archiver, spam, supprimer, suivi, libellé — sans ouvrir les messages
 - Clic droit sur une boîte : tout sélectionner, tout marquer comme lu / non lu, vider la boîte (vers la corbeille)
+- **Google Drive** : barre de navigation à gauche pour passer du courrier à Drive (Ctrl+1 / Ctrl+2) ;
+  Mon Drive, récents, suivis, partagés, corbeille, recherche ; ouvrir, télécharger, importer (aussi par
+  glisser-déposer), nouveau dossier, renommer, suivre, supprimer, envoyer par e-mail, espace utilisé
+- Joindre un fichier Google Drive à un message (Docs, Sheets, Slides exportés en .docx, .xlsx, .pptx ; lien
+  proposé au-delà de 25 Mo) et enregistrer une pièce jointe dans Google Drive
 - Recherche avec la syntaxe Gmail (`from:`, `has:attachment`, `after:2026/01/01`…)
 - Relève réglable, notifications KDE par boîte ou catégorie au choix, pastille de non-lus, liens `mailto:`
 - Connexion OAuth 2.0 (PKCE) dans le navigateur ; jeton rangé dans KWallet
@@ -30,12 +35,15 @@ Google impose que chaque application utilisant l'API Gmail ait son « client OAu
 L'assistant intégré (bouton « Identifiants Google Cloud… ») détaille les étapes :
 
 1. Créer un projet sur <https://console.cloud.google.com/>
-2. Activer l'**API Gmail**
+2. Activer l'**API Gmail** et l'**API Google Drive**
 3. Google Auth Platform → configurer l'écran de consentement (audience **Externe**)
 4. Audience → s'ajouter comme **utilisateur test**, puis **Publier l'application**
    (sinon Google demande de se reconnecter tous les 7 jours)
 5. Clients → créer un client **Application de bureau** → télécharger le JSON
 6. Importer ce JSON dans G-Desk, puis « Se connecter avec Google »
+
+Déjà connecté avec une version précédente ? Activez l'API Google Drive dans votre projet, puis ouvrez
+la vue Drive : G-Desk vous proposera d'autoriser l'accès à Drive (une seule fois, dans le navigateur).
 
 Google affichera « Google n'a pas validé cette application » : c'est normal, c'est votre
 propre projet. Cliquez sur « Paramètres avancés » → « Accéder à G-Desk ».
@@ -57,7 +65,7 @@ Tests (sans compte Google) :
 ## Raccourcis
 Ctrl+N nouveau · Ctrl+R répondre · Ctrl+Maj+R répondre à tous · Ctrl+L transférer ·
 A archiver · Suppr supprimer · S suivi · M lu/non lu · J spam · Ctrl+F rechercher · F5 actualiser ·
-Ctrl+A tout cocher · Échap décocher · Ctrl+, paramètres · Ctrl+Entrée envoyer (fenêtre de rédaction)
+Ctrl+A tout cocher · Échap décocher · Ctrl+1 courrier · Ctrl+2 Google Drive · Ctrl+, paramètres · Ctrl+Entrée envoyer (fenêtre de rédaction)
 
 ## Site web
 Le site (dossier `docs/`) est publié par GitHub Pages. Il est statique, sans cookie ni ressource externe.

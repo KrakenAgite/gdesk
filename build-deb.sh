@@ -54,6 +54,8 @@ Description: Client mail natif pour Gmail (API officielle)
  dossiers et libellés, lecture sécurisée des messages HTML (images
  distantes bloquées), réponse, transfert, pièces jointes, brouillons,
  recherche, notifications et compteur de non-lus dans la barre système.
+ Google Drive intégré : parcourir, importer et télécharger des fichiers,
+ joindre des fichiers Drive aux messages, enregistrer les pièces jointes.
  La connexion OAuth se fait dans le navigateur ; le jeton est conservé
  dans KWallet.
 CTRL

@@ -40,6 +40,7 @@ protected:
 signals:
     void saveAttachmentRequested(int index);
     void openAttachmentRequested(int index);
+    void saveAttachmentToDriveRequested(int index);
     void remoteContentAllowed(bool alwaysForSender);
     void mailtoClicked(const QUrl &url);
 

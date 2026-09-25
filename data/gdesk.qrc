@@ -3,11 +3,14 @@
   <file>sidebar/allmail.svg</file>
   <file>sidebar/compose.svg</file>
   <file>sidebar/draft.svg</file>
+  <file>sidebar/drive.svg</file>
   <file>sidebar/forums.svg</file>
   <file>sidebar/important.svg</file>
   <file>sidebar/inbox.svg</file>
   <file>sidebar/label.svg</file>
+  <file>sidebar/new.svg</file>
   <file>sidebar/promotions.svg</file>
+  <file>sidebar/recent.svg</file>
   <file>sidebar/sent.svg</file>
   <file>sidebar/social.svg</file>
   <file>sidebar/spam.svg</file>

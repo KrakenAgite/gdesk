@@ -322,6 +322,8 @@ void MessageView::showMessage(const MailMessage &message, bool allowRemote)
         menu->addAction(QIcon::fromTheme("document-open"), "Ouvrir", this, [this, i] { emit openAttachmentRequested(i); });
         menu->addAction(QIcon::fromTheme("document-save-as"), "Enregistrer sous…", this,
                         [this, i] { emit saveAttachmentRequested(i); });
+        menu->addAction(QIcon::fromTheme("folder-gdrive", QIcon::fromTheme("folder-cloud")),
+                        "Enregistrer dans Google Drive…", this, [this, i] { emit saveAttachmentToDriveRequested(i); });
         btn->setMenu(menu);
         m_attachmentLayout->addWidget(btn);
         ++shown;

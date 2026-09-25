@@ -18,7 +18,9 @@ class GoogleAuth : public QObject
 public:
     using TokenCallback = std::function<void(const QString &accessToken, const QString &error)>;
 
-    static constexpr const char *Scope = "https://www.googleapis.com/auth/gmail.modify";
+    // Gmail (lecture, envoi, libellés) et Google Drive (parcourir, joindre, enregistrer des pièces jointes)
+    static constexpr const char *Scope =
+        "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive";
 
     GoogleAuth(QNetworkAccessManager *nam, QObject *parent = nullptr);
 
