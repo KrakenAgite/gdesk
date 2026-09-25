@@ -44,6 +44,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     // Interface
@@ -89,6 +90,18 @@ private:
 
     // Actions
     void applyLabels(const QStringList &add, const QStringList &remove, bool removesFromView, const QString &done);
+    void applyLabelsTo(const QList<QTreeWidgetItem *> &items, const QStringList &add, const QStringList &remove,
+                       bool removesFromView, const QString &done);
+    QList<QTreeWidgetItem *> targetItems() const; // messages cochés, sinon message(s) sélectionné(s)
+    void markTargets(bool read);
+
+    // Sélection par cases à cocher
+    QWidget *buildSelectionBar();
+    void setChecked(QTreeWidgetItem *item, bool on);
+    void onCheckClicked(const QModelIndex &index, Qt::KeyboardModifiers modifiers);
+    void checkWhere(const std::function<bool(const QStringList &labels)> &predicate);
+    void clearChecks();
+    void updateSelectionBar();
     void archive();
     void trash();
     void restore();
@@ -151,7 +164,14 @@ private:
     QStringList m_notifyFolders;      // boîtes dont les nouveaux messages sont notifiés
     QString m_notifyFolder = "INBOX"; // boîte ouverte au clic sur la dernière notification
     int m_pollGeneration = 0;
-    bool m_bulkBusy = false;         // opération en masse en cours (tout marquer, vider)
+    bool m_bulkBusy = false;
+    QSet<QString> m_checked;          // messages cochés
+    int m_lastCheckedRow = -1;        // pour Maj+clic
+    class QCheckBox *m_masterCheck = nullptr;
+    QLabel *m_selectionLabel = nullptr;
+    QWidget *m_selectionActions = nullptr;
+    QList<QToolButton *> m_selectionButtons;
+    QToolButton *m_selArchive = nullptr, *m_selSpam = nullptr, *m_selDelete = nullptr, *m_selRestore = nullptr;         // opération en masse en cours (tout marquer, vider)
     bool m_selectAllPending = false; // tout sélectionner dès que la liste est chargée
 
     QString m_currentLabel = "INBOX";

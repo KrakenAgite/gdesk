@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QJsonArray>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QListWidget>
 #include <QMenu>
@@ -45,6 +46,7 @@
 #include <QTimer>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStyleOptionViewItem>
 #include <QTest>
 #include <QUrlQuery>
 #include <QWebEnginePage>
@@ -87,6 +89,7 @@ public:
     QMap<QString, QSet<QString>> messages;
     QStringList order;
     QList<Batch> batches;
+    QStringList trashed;
 
     FakeGmail()
     {
@@ -156,6 +159,12 @@ private:
             }
             batches << batch;
             return {};
+        }
+        if (method == "POST" && path.endsWith("/trash")) {
+            const QString id = path.section('/', 1, 1);
+            messages[id].insert("TRASH");
+            trashed << id;
+            return {{"id", id}};
         }
         if (method == "GET" && path.startsWith("messages/")) {
             const QString id = path.section('/', 1, 1);
@@ -648,6 +657,7 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
                     auto *delegate = new MailListDelegate(&list);
                     delegate->density = density;
                     list.setItemDelegate(delegate);
+                    delegate->attachTo(&list);
                     for (const Row &r : rows) {
                         auto *item = new QTreeWidgetItem(&list);
                         item->setData(0, MailRoles::Who, r.who);
@@ -1002,8 +1012,132 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         }();
         QVERIFY(list);
         actions("INBOX").value("selectAll")->trigger();
-        QTRY_COMPARE_WITH_TIMEOUT(list->selectedItems().size(), 50, 15000); // première page de 50
+        auto checkedCount = [&] {
+            int n = 0;
+            for (int i = 0; i < list->topLevelItemCount(); ++i)
+                n += list->topLevelItem(i)->data(0, MailRoles::Checked).toBool();
+            return n;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(checkedCount(), 50, 15000); // première page de 50, toutes cochées
         QCOMPARE(list->topLevelItemCount(), 50);
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void checkboxSelection()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 12; ++i) {
+            QSet<QString> l{"INBOX", "CATEGORY_PERSONAL"};
+            if (i < 4)
+                l.insert("UNREAD");
+            if (i == 5)
+                l.insert("STARRED");
+            gmail.add(QString("m%1").arg(i), l);
+        }
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+
+        MainWindow win;
+        win.resize(1200, 800);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+
+        QTreeWidget *list = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                list = t;
+        auto *delegate = qobject_cast<MailListDelegate *>(list->itemDelegate());
+        auto *bar = win.findChild<QWidget *>("selectionBar");
+        QVERIFY(list && bar);
+        auto *master = bar->findChild<QCheckBox *>();
+        auto button = [&](const QString &text) {
+            for (QToolButton *b : bar->findChildren<QToolButton *>())
+                if (b->text() == text)
+                    return b;
+            return static_cast<QToolButton *>(nullptr);
+        };
+        auto checked = [&] {
+            QStringList ids;
+            for (int i = 0; i < list->topLevelItemCount(); ++i)
+                if (list->topLevelItem(i)->data(0, MailRoles::Checked).toBool())
+                    ids << list->topLevelItem(i)->data(0, MailRoles::Id).toString();
+            return ids;
+        };
+        auto clickCheck = [&](int row, Qt::KeyboardModifiers mods = {}) {
+            const QRect r = list->visualItemRect(list->topLevelItem(row));
+            QTest::mouseClick(list->viewport(), Qt::LeftButton, mods, delegate->checkRect(r).center());
+        };
+        auto *view = win.findChild<MessageView *>();
+
+        // Chargement de la réception
+        win.folderMenu("INBOX")->actions().first()->trigger(); // « Sélectionner tous les messages »
+        QTRY_COMPARE_WITH_TIMEOUT(checked().size(), 12, 15000);
+        QCOMPARE(master->checkState(), Qt::Checked);
+        QVERIFY(button("Non lu")->isVisible());
+        QVERIFY(delegate->selectionMode);
+
+        // Échap : tout est décoché, la barre d'actions disparaît
+        QTest::keyClick(&win, Qt::Key_Escape);
+        QCOMPARE(checked().size(), 0);
+        QCOMPARE(master->checkState(), Qt::Unchecked);
+        QVERIFY(!button("Non lu")->isVisible());
+
+        // Cocher un message ne l'ouvre pas (et ne le marque donc pas comme lu)
+        clickCheck(1);
+        QCOMPARE(checked(), QStringList{"m1"});
+        QTest::qWait(200);
+        QVERIFY(view->message().id.isEmpty());
+        QVERIFY(list->selectedItems().isEmpty());
+        QCOMPARE(master->checkState(), Qt::PartiallyChecked);
+
+        // Maj+clic : plage m1 → m4
+        clickCheck(4, Qt::ShiftModifier);
+        QCOMPARE(checked(), (QStringList{"m1", "m2", "m3", "m4"}));
+
+        // « Lu » sur la sélection
+        button("Lu")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.batches.size(), 1, 10000);
+        QCOMPARE(gmail.batches[0].count, 4);
+        QCOMPARE(gmail.batches[0].remove, QStringList{"UNREAD"});
+        QCOMPARE(gmail.count({"UNREAD"}), 1); // seul m0 reste non lu
+        QCOMPARE(checked().size(), 4);        // la sélection est conservée
+
+        // L'étoile d'une carte ne concerne que cette carte, même avec une sélection
+        QStyleOptionViewItem opt;
+        opt.initFrom(list->viewport());
+        opt.font = list->font();
+        opt.rect = list->visualItemRect(list->topLevelItem(7));
+        QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, delegate->starRect(opt).center());
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.batches.size(), 2, 10000);
+        QCOMPARE(gmail.batches[1].count, 1);
+        QCOMPARE(gmail.batches[1].add, QStringList{"STARRED"});
+        QVERIFY(view->message().id.isEmpty());
+
+        // Menu de sélection : « Suivis » coche m5 et m7
+        QMenu *pick = nullptr;
+        for (QToolButton *b : bar->findChildren<QToolButton *>())
+            if (b->arrowType() == Qt::DownArrow)
+                pick = b->menu();
+        QVERIFY(pick);
+        for (QAction *a : pick->actions())
+            if (a->text() == "Suivis")
+                a->trigger();
+        QCOMPARE(checked(), (QStringList{"m5", "m7"}));
+
+        // Supprimer la sélection : les deux partent à la corbeille et disparaissent de la liste
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            win.grab().save(out + "/selection.png");
+        button("Supprimer")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.trashed.size(), 2, 10000);
+        QCOMPARE(QSet<QString>(gmail.trashed.begin(), gmail.trashed.end()), (QSet<QString>{"m5", "m7"}));
+        QCOMPARE(list->topLevelItemCount(), 10);
+        QCOMPARE(checked().size(), 0);
+        QVERIFY(!button("Non lu")->isVisible());
 
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});

@@ -52,6 +52,7 @@
       <description>
         <p>Choose the folder shown at startup (or the last one used), and choose which folders and Gmail categories trigger notifications. Notifications show the category and open the right folder.</p>
         <p>Right-click a folder to select all its messages, mark everything as read or unread, or move all its messages to the trash.</p>
+        <p>Checkboxes on messages with a selection bar: mark read or unread, archive, spam, delete, star or label several messages at once without opening them.</p>
       </description>
     </release>
     <release version="2.2.0" date="2026-09-25">

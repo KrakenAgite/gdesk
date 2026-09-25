@@ -9,6 +9,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -231,6 +232,14 @@ QWidget *MainWindow::buildMailPage()
             reloadList();
         }
     });
+    auto *checkAll = new QAction("Tout sélectionner", this);
+    checkAll->setShortcut(QKeySequence::SelectAll);
+    connect(checkAll, &QAction::triggered, this, [this] { checkWhere([](const QStringList &) { return true; }); });
+    addAction(checkAll);
+    auto *uncheck = new QAction(this);
+    uncheck->setShortcut(Qt::Key_Escape);
+    connect(uncheck, &QAction::triggered, this, &MainWindow::clearChecks);
+    addAction(uncheck);
     auto *focusSearch = new QAction(this);
     focusSearch->setShortcut(QKeySequence::Find);
     connect(focusSearch, &QAction::triggered, this, [this] {
@@ -321,13 +330,16 @@ QWidget *MainWindow::buildMailPage()
     m_listDelegate = new MailListDelegate(m_list);
     m_list->setItemDelegate(m_listDelegate);
     connect(m_list, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);
+    m_listDelegate->attachTo(m_list);
     connect(m_listDelegate, &MailListDelegate::starClicked, this, [this](const QModelIndex &index) {
-        QTreeWidgetItem *item = m_list->itemFromIndex(index);
-        if (!item)
-            return;
-        m_list->setCurrentItem(item);
-        toggleStar();
+        if (QTreeWidgetItem *item = m_list->itemFromIndex(index)) { // étoile de cette carte uniquement
+            const bool starred = item->data(0, MailRoles::Labels).toStringList().contains("STARRED");
+            applyLabelsTo({item}, starred ? QStringList() : QStringList{"STARRED"},
+                          starred ? QStringList{"STARRED"} : QStringList(),
+                          starred && m_currentLabel == "STARRED" && m_query.isEmpty(), {});
+        }
     });
+    connect(m_listDelegate, &MailListDelegate::checkClicked, this, &MainWindow::onCheckClicked);
     connect(m_list->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         if (value >= m_list->verticalScrollBar()->maximum() - 5 && !m_loadingList && !m_nextPageToken.isEmpty())
             fetchPage(m_generation, {});
@@ -354,7 +366,14 @@ QWidget *MainWindow::buildMailPage()
     });
 
     m_rightSplitter = new QSplitter(Qt::Vertical);
-    m_rightSplitter->addWidget(m_list);
+    auto *listPane = new QWidget;
+    auto *listLayout = new QVBoxLayout(listPane);
+    listLayout->setContentsMargins(0, 0, 0, 0);
+    listLayout->setSpacing(0);
+    listLayout->addWidget(buildSelectionBar());
+    listLayout->addWidget(m_list, 1);
+    listPane->installEventFilter(this); // boutons compacts quand la liste est étroite
+    m_rightSplitter->addWidget(listPane);
     m_rightSplitter->addWidget(m_view);
     m_rightSplitter->setStretchFactor(0, 2);
     m_rightSplitter->setStretchFactor(1, 3);
@@ -425,7 +444,7 @@ void MainWindow::setupTray()
 
 void MainWindow::updateActions()
 {
-    const int selected = m_list ? m_list->selectedItems().size() : 0;
+    const int selected = m_list ? int(targetItems().size()) : 0;
     const bool single = selected == 1 && !m_view->message().id.isEmpty();
     const bool inTrash = m_currentLabel == "TRASH" && m_query.isEmpty();
     const bool inSpam = m_currentLabel == "SPAM" && m_query.isEmpty();
@@ -777,6 +796,9 @@ void MainWindow::reloadList(const QString &keepSelected)
         m_list->clear();
     }
     m_rows.clear();
+    m_checked.clear();
+    m_lastCheckedRow = -1;
+    updateSelectionBar();
     if (keepSelected.isEmpty()) {
         m_openId.clear();
         m_view->clear();
@@ -828,10 +850,9 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
                     fillRow(it, Mime::parseMessage(o));
             });
         }
-        if (selectAllAfter) {
-            m_list->selectAll();
-            m_list->setFocus();
-        }
+        if (selectAllAfter)
+            checkWhere([](const QStringList &) { return true; });
+        updateSelectionBar();
     });
 }
 
@@ -865,12 +886,15 @@ void MainWindow::removeRows(const QList<QTreeWidgetItem *> &items)
         QSignalBlocker b(m_list);
         for (QTreeWidgetItem *it : items) {
             m_rows.remove(it->data(0, MailRoles::Id).toString());
+            m_checked.remove(it->data(0, MailRoles::Id).toString());
             delete it;
         }
     }
+    m_lastCheckedRow = -1;
+    updateSelectionBar();
     m_openId.clear();
     m_view->clear();
-    if (m_list->topLevelItemCount() > 0) {
+    if (m_list->topLevelItemCount() > 0 && m_checked.isEmpty()) { // après une action groupée, rien n'est ouvert
         nextIndex = qMin(nextIndex, m_list->topLevelItemCount() - 1);
         m_list->setCurrentItem(m_list->topLevelItem(nextIndex));
     }
@@ -1056,10 +1080,227 @@ void MainWindow::openAttachment(int index)
 // =============================================================================
 //  Actions
 // =============================================================================
+// =============================================================================
+//  Sélection par cases à cocher
+// =============================================================================
+QWidget *MainWindow::buildSelectionBar()
+{
+    auto *bar = new QWidget;
+    bar->setObjectName("selectionBar");
+    bar->setStyleSheet("#selectionBar { border-bottom: 1px solid palette(mid); }");
+    auto *h = new QHBoxLayout(bar);
+    h->setContentsMargins(17, 3, 8, 3);
+    h->setSpacing(2);
+
+    m_masterCheck = new QCheckBox;
+    m_masterCheck->setTristate(true);
+    m_masterCheck->setToolTip("Tout sélectionner / tout désélectionner (Ctrl+A, Échap)");
+    connect(m_masterCheck, &QCheckBox::clicked, this, [this] {
+        if (m_checked.isEmpty())
+            checkWhere([](const QStringList &) { return true; });
+        else
+            clearChecks();
+    });
+    h->addWidget(m_masterCheck);
+
+    auto *pick = new QToolButton;
+    pick->setAutoRaise(true);
+    pick->setArrowType(Qt::DownArrow);
+    pick->setPopupMode(QToolButton::InstantPopup);
+    pick->setToolTip("Sélectionner…");
+    auto *pickMenu = new QMenu(pick);
+    pickMenu->addAction("Tous", this, [this] { checkWhere([](const QStringList &) { return true; }); });
+    pickMenu->addAction("Aucun", this, &MainWindow::clearChecks);
+    pickMenu->addSeparator();
+    pickMenu->addAction("Lus", this, [this] { checkWhere([](const QStringList &l) { return !l.contains("UNREAD"); }); });
+    pickMenu->addAction("Non lus", this, [this] { checkWhere([](const QStringList &l) { return l.contains("UNREAD"); }); });
+    pickMenu->addAction("Suivis", this, [this] { checkWhere([](const QStringList &l) { return l.contains("STARRED"); }); });
+    pickMenu->addAction("Non suivis", this,
+                        [this] { checkWhere([](const QStringList &l) { return !l.contains("STARRED"); }); });
+    pick->setMenu(pickMenu);
+    h->addWidget(pick);
+    h->addSpacing(6);
+
+    m_selectionLabel = new QLabel;
+    QFont f = m_selectionLabel->font();
+    f.setBold(true);
+    m_selectionLabel->setFont(f);
+    m_selectionLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    h->addWidget(m_selectionLabel, 1);
+
+    // Actions sur les messages cochés
+    m_selectionActions = new QWidget;
+    auto *ah = new QHBoxLayout(m_selectionActions);
+    ah->setContentsMargins(0, 0, 0, 0);
+    ah->setSpacing(0);
+    auto addButton = [&](const char *icon, const QString &text, auto slot) {
+        auto *b = new QToolButton;
+        b->setIcon(QIcon::fromTheme(icon));
+        b->setText(text);
+        b->setToolTip(text);
+        b->setAutoRaise(true);
+        b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        connect(b, &QToolButton::clicked, this, slot);
+        ah->addWidget(b);
+        m_selectionButtons << b;
+        return b;
+    };
+    addButton("mail-mark-read", "Lu", [this] { markTargets(true); });
+    addButton("mail-mark-unread", "Non lu", [this] { markTargets(false); });
+    m_selArchive = addButton("archive-insert", "Archiver", [this] { archive(); });
+    m_selSpam = addButton("mail-mark-junk", "Spam", [this] { toggleSpam(); });
+    m_selDelete = addButton("edit-delete", "Supprimer", [this] { trash(); });
+    m_selRestore = addButton("edit-undo", "Restaurer", [this] { restore(); });
+    addButton("rating", "Suivi", [this] { toggleStar(); });
+    auto *labelBtn = addButton("tag", "Libellé", [] {});
+    labelBtn->setPopupMode(QToolButton::InstantPopup);
+    auto *labelMenu = new QMenu(labelBtn);
+    connect(labelMenu, &QMenu::aboutToShow, this, [this, labelMenu] {
+        labelMenu->clear();
+        const QList<LabelChoice> labels = userLabelChoices();
+        if (labels.isEmpty())
+            labelMenu->addAction("Aucun libellé dans ce compte")->setEnabled(false);
+        for (const LabelChoice &l : labels)
+            labelMenu->addAction(QIcon(tintedIcon(folderIcon("label"), 16, l.color.isValid() ? l.color
+                                                     : palette().color(QPalette::Text), devicePixelRatioF())),
+                                 l.name, this, [this, id = l.id, name = l.name] {
+                                     applyLabels({id}, {}, false, QString("Libellé « %1 » ajouté.").arg(name));
+                                 });
+    });
+    labelBtn->setMenu(labelMenu);
+    ah->addSpacing(4);
+    auto *close = new QToolButton;
+    close->setIcon(QIcon::fromTheme("dialog-close", QIcon::fromTheme("edit-clear")));
+    close->setToolTip("Annuler la sélection (Échap)");
+    close->setAutoRaise(true);
+    connect(close, &QToolButton::clicked, this, &MainWindow::clearChecks);
+    ah->addWidget(close);
+    h->addWidget(m_selectionActions);
+    m_selectionActions->setVisible(false);
+    return bar;
+}
+
+void MainWindow::setChecked(QTreeWidgetItem *item, bool on)
+{
+    const QString id = item->data(0, MailRoles::Id).toString();
+    if (on)
+        m_checked.insert(id);
+    else
+        m_checked.remove(id);
+    item->setData(0, MailRoles::Checked, on);
+}
+
+void MainWindow::onCheckClicked(const QModelIndex &index, Qt::KeyboardModifiers modifiers)
+{
+    QTreeWidgetItem *item = m_list->itemFromIndex(index);
+    if (!item)
+        return;
+    const int row = index.row();
+    const bool on = !item->data(0, MailRoles::Checked).toBool();
+    if ((modifiers & Qt::ShiftModifier) && m_lastCheckedRow >= 0 && m_lastCheckedRow < m_list->topLevelItemCount()) {
+        // Maj+clic : toute la plage depuis la dernière case cliquée
+        for (int r = qMin(row, m_lastCheckedRow); r <= qMax(row, m_lastCheckedRow); ++r)
+            setChecked(m_list->topLevelItem(r), on);
+    } else {
+        setChecked(item, on);
+    }
+    m_lastCheckedRow = row;
+    updateSelectionBar();
+}
+
+void MainWindow::checkWhere(const std::function<bool(const QStringList &)> &predicate)
+{
+    // Carte encore en chargement : libellés inconnus. « Tous » la coche quand même
+    // (le prédicat accepte une liste vide), « Lus », « Suivis »… non.
+    const bool takeLoading = predicate({}) && predicate({"UNREAD", "STARRED"});
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = m_list->topLevelItem(i);
+        const bool loaded = !item->data(0, MailRoles::Subject).toString().isEmpty();
+        setChecked(item, loaded ? predicate(item->data(0, MailRoles::Labels).toStringList()) : takeLoading);
+    }
+    m_lastCheckedRow = -1;
+    updateSelectionBar();
+}
+
+void MainWindow::clearChecks()
+{
+    if (m_checked.isEmpty())
+        return;
+    for (const QString &id : std::as_const(m_checked))
+        if (QTreeWidgetItem *item = m_rows.value(id))
+            item->setData(0, MailRoles::Checked, false);
+    m_checked.clear();
+    m_lastCheckedRow = -1;
+    updateSelectionBar();
+}
+
+void MainWindow::updateSelectionBar()
+{
+    const int n = m_checked.size();
+    const int total = m_list->topLevelItemCount();
+    m_listDelegate->selectionMode = n > 0;
+    m_list->viewport()->update();
+    {
+        QSignalBlocker b(m_masterCheck);
+        m_masterCheck->setCheckState(n == 0 ? Qt::Unchecked : n >= total ? Qt::Checked : Qt::PartiallyChecked);
+    }
+    m_masterCheck->setEnabled(total > 0);
+    if (n > 0)
+        m_selectionLabel->setText(n == 1 ? QString("1 sélectionné") : QString("%L1 sélectionnés").arg(n));
+    else if (!m_query.isEmpty())
+        m_selectionLabel->setText("Résultats de recherche");
+    else
+        m_selectionLabel->setText(folderName(m_currentLabel));
+    m_selectionActions->setVisible(n > 0);
+    const bool inTrash = m_currentLabel == "TRASH" && m_query.isEmpty();
+    const bool inSpam = m_currentLabel == "SPAM" && m_query.isEmpty();
+    m_selRestore->setVisible(inTrash);
+    m_selDelete->setVisible(!inTrash);
+    m_selArchive->setVisible(!inTrash && !inSpam);
+    m_selSpam->setText(inSpam ? "Non spam" : "Spam");
+    m_selSpam->setToolTip(m_selSpam->text());
+    updateActions();
+}
+
+void MainWindow::markTargets(bool read)
+{
+    if (read)
+        applyLabels({}, {"UNREAD"}, false, {});
+    else
+        applyLabels({"UNREAD"}, {}, false, {});
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // Liste étroite (aperçu à droite) : boutons de la barre de sélection en icônes seules
+    if (event->type() == QEvent::Resize && watched->isWidgetType()) {
+        const bool narrow = static_cast<QWidget *>(watched)->width() < 620;
+        for (QToolButton *b : std::as_const(m_selectionButtons))
+            b->setToolButtonStyle(narrow ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+QList<QTreeWidgetItem *> MainWindow::targetItems() const
+{
+    if (m_checked.isEmpty())
+        return m_list->selectedItems();
+    QList<QTreeWidgetItem *> items;
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) // dans l'ordre de la liste
+        if (m_checked.contains(m_list->topLevelItem(i)->data(0, MailRoles::Id).toString()))
+            items << m_list->topLevelItem(i);
+    return items;
+}
+
 void MainWindow::applyLabels(const QStringList &add, const QStringList &remove, bool removesFromView,
                              const QString &done)
 {
-    const QList<QTreeWidgetItem *> items = m_list->selectedItems();
+    applyLabelsTo(targetItems(), add, remove, removesFromView, done);
+}
+
+void MainWindow::applyLabelsTo(const QList<QTreeWidgetItem *> &items, const QStringList &add,
+                               const QStringList &remove, bool removesFromView, const QString &done)
+{
     if (items.isEmpty())
         return;
     QStringList ids;
@@ -1092,14 +1333,14 @@ void MainWindow::applyLabels(const QStringList &add, const QStringList &remove, 
 
 void MainWindow::archive()
 {
-    const int n = m_list->selectedItems().size();
+    const int n = targetItems().size();
     applyLabels({}, {"INBOX"}, m_currentLabel == "INBOX" || m_currentLabel.startsWith("CATEGORY_"),
                 n > 1 ? QString("%1 messages archivés.").arg(n) : QString("Message archivé."));
 }
 
 void MainWindow::trash()
 {
-    const QList<QTreeWidgetItem *> items = m_list->selectedItems();
+    const QList<QTreeWidgetItem *> items = targetItems();
     if (items.isEmpty() || m_currentLabel == "TRASH")
         return;
     for (QTreeWidgetItem *it : items)
@@ -1116,7 +1357,7 @@ void MainWindow::trash()
 
 void MainWindow::restore()
 {
-    const QList<QTreeWidgetItem *> items = m_list->selectedItems();
+    const QList<QTreeWidgetItem *> items = targetItems();
     for (QTreeWidgetItem *it : items)
         m_api->untrashMessage(it->data(0, MailRoles::Id).toString(), [this](const QJsonObject &, const QString &err) {
             if (!err.isEmpty())
@@ -1137,7 +1378,7 @@ void MainWindow::toggleSpam()
 void MainWindow::toggleRead()
 {
     bool anyUnread = false;
-    for (QTreeWidgetItem *it : m_list->selectedItems())
+    for (QTreeWidgetItem *it : targetItems())
         anyUnread |= it->data(0, MailRoles::Labels).toStringList().contains("UNREAD");
     if (anyUnread)
         applyLabels({}, {"UNREAD"}, false, {});
@@ -1148,7 +1389,7 @@ void MainWindow::toggleRead()
 void MainWindow::toggleStar()
 {
     bool anyUnstarred = false;
-    for (QTreeWidgetItem *it : m_list->selectedItems())
+    for (QTreeWidgetItem *it : targetItems())
         anyUnstarred |= !it->data(0, MailRoles::Labels).toStringList().contains("STARRED");
     if (anyUnstarred)
         applyLabels({"STARRED"}, {}, false, {});
@@ -1377,8 +1618,7 @@ void MainWindow::selectAllMessages(const QString &id)
             reloadList();
         return;
     }
-    m_list->selectAll();
-    m_list->setFocus();
+    checkWhere([](const QStringList &) { return true; });
 }
 
 void MainWindow::collectMessageIds(const QStringList &labels, const QString &query, const QString &pageToken,

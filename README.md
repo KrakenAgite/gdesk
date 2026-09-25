@@ -14,7 +14,8 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
   (UTF-8, Windows-1252, ISO-8859-x, cyrillique, japonais, chinois…)
 - Répondre, répondre à tous, transférer (avec pièces jointes), nouveau message,
   pièces jointes, brouillons enregistrés dans Gmail, autocomplétion des adresses
-- Archiver, supprimer, restaurer, spam, lu/non lu, suivi — sur plusieurs messages à la fois
+- Cases à cocher sur les messages et barre de sélection (Tous, Lus, Non lus, Suivis… ; Maj+clic pour une plage) :
+  lu / non lu, archiver, spam, supprimer, suivi, libellé — sans ouvrir les messages
 - Clic droit sur une boîte : tout sélectionner, tout marquer comme lu / non lu, vider la boîte (vers la corbeille)
 - Recherche avec la syntaxe Gmail (`from:`, `has:attachment`, `after:2026/01/01`…)
 - Relève réglable, notifications KDE par boîte ou catégorie au choix, pastille de non-lus, liens `mailto:`
@@ -56,7 +57,7 @@ Tests (sans compte Google) :
 ## Raccourcis
 Ctrl+N nouveau · Ctrl+R répondre · Ctrl+Maj+R répondre à tous · Ctrl+L transférer ·
 A archiver · Suppr supprimer · S suivi · M lu/non lu · J spam · Ctrl+F rechercher · F5 actualiser ·
-Ctrl+, paramètres · Ctrl+Entrée envoyer (fenêtre de rédaction)
+Ctrl+A tout cocher · Échap décocher · Ctrl+, paramètres · Ctrl+Entrée envoyer (fenêtre de rédaction)
 
 ## Site web
 Le site (dossier `docs/`) est publié par GitHub Pages. Il est statique, sans cookie ni ressource externe.

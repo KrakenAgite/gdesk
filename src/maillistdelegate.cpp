@@ -5,12 +5,15 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStyle>
+#include <QStyleOptionButton>
 #include <QTextLayout>
 
 namespace {
 constexpr int CardMarginH = 8;  // espace entre la carte et les bords de la liste
 constexpr int CardMarginV = 3;  // demi-espace entre deux cartes
-constexpr int DotSpace = 16;    // colonne du point « non lu »
+constexpr int DotSpace = 30;    // colonne du point « non lu » / de la case à cocher
+constexpr int CheckSize = 18;
 constexpr int StarSize = 16;
 constexpr int LineGap = 2;
 
@@ -68,6 +71,49 @@ QRect MailListDelegate::cardRect(const QRect &row) const
     return row.adjusted(CardMarginH, CardMarginV, -CardMarginH, -CardMarginV);
 }
 
+QRect MailListDelegate::checkRect(const QRect &row) const
+{
+    const QRect card = cardRect(row);
+    return {card.left() + (DotSpace - CheckSize) / 2 + 1, card.center().y() - CheckSize / 2, CheckSize, CheckSize};
+}
+
+void MailListDelegate::attachTo(QAbstractItemView *view)
+{
+    m_view = view;
+    view->viewport()->installEventFilter(this);
+}
+
+bool MailListDelegate::eventFilter(QObject *watched, QEvent *event)
+{
+    const QEvent::Type t = event->type();
+    if (!m_view || watched != m_view->viewport()
+        || (t != QEvent::MouseButtonPress && t != QEvent::MouseButtonRelease && t != QEvent::MouseButtonDblClick))
+        return false;
+    auto *me = static_cast<QMouseEvent *>(event);
+    if (me->button() != Qt::LeftButton)
+        return false;
+    const QPoint pos = me->position().toPoint();
+    const QModelIndex index = m_view->indexAt(pos);
+    if (!index.isValid())
+        return false;
+    QStyleOptionViewItem opt;
+    opt.initFrom(m_view->viewport());
+    opt.font = m_view->font();
+    opt.rect = m_view->visualRect(index);
+    const bool onCheck = checkRect(opt.rect).adjusted(-6, -8, 6, 8).contains(pos);
+    const bool onStar = !index.data(MailRoles::Subject).toString().isEmpty()
+                        && starRect(opt).adjusted(-5, -5, 5, 5).contains(pos);
+    if (!onCheck && !onStar)
+        return false;
+    if (t == QEvent::MouseButtonRelease) {
+        if (onCheck)
+            emit checkClicked(index, me->modifiers());
+        else
+            emit starClicked(index);
+    }
+    return true; // ni sélection, ni ouverture du message
+}
+
 QRect MailListDelegate::starRect(const QStyleOptionViewItem &option) const
 {
     const QRect card = cardRect(option.rect);
@@ -97,6 +143,8 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     QColor bg = cardColor(pal);
     if (selected)
         bg = mix(bg, accent, 0.22);
+    else if (index.data(MailRoles::Checked).toBool())
+        bg = mix(bg, accent, 0.10);
     else if (hovered)
         bg = mix(bg, text, 0.04);
     QColor border = selected ? accent : mix(bg, text, 0.12);
@@ -118,13 +166,23 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     const QFont small = smallFont(option.font);
     const QFontMetrics fmBold(bold), fmNormal(normalFont), fmSmall(small);
 
-    // Point « non lu »
-    if (unread) {
+    // Case à cocher (au survol, ou partout dès qu'un message est coché), sinon point « non lu »
+    const bool checked = index.data(MailRoles::Checked).toBool();
+    if (checked || hovered || selectionMode) {
+        QStyleOptionButton box;
+        box.rect = checkRect(option.rect);
+        box.state = QStyle::State_Enabled | (checked ? QStyle::State_On : QStyle::State_Off);
+        if (hovered)
+            box.state |= QStyle::State_MouseOver;
+        box.palette = pal;
+        const QWidget *w = option.widget;
+        (w ? w->style() : QApplication::style())->drawPrimitive(QStyle::PE_IndicatorCheckBox, &box, p, w);
+    } else if (unread) {
         p->setPen(Qt::NoPen);
         p->setBrush(accent);
         const double d = 8;
-        p->drawEllipse(QRectF(content.left() - DotSpace / 2.0 - d / 2 + 1,
-                              content.top() + (fmBold.height() - d) / 2.0, d, d));
+        const QRect check = checkRect(option.rect);
+        p->drawEllipse(QRectF(check.center().x() - d / 2 + 0.5, check.center().y() - d / 2 + 0.5, d, d));
     }
 
     const QString subject = index.data(MailRoles::Subject).toString();
@@ -215,17 +273,4 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
         layout.endLayout();
     }
     p->restore();
-}
-
-bool MailListDelegate::editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option,
-                                   const QModelIndex &index)
-{
-    if (event->type() == QEvent::MouseButtonRelease) {
-        auto *me = static_cast<QMouseEvent *>(event);
-        if (me->button() == Qt::LeftButton && starRect(option).adjusted(-4, -4, 4, 4).contains(me->position().toPoint())) {
-            emit starClicked(index);
-            return true;
-        }
-    }
-    return QStyledItemDelegate::editorEvent(event, model, option, index);
 }
