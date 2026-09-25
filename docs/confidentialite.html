@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Politique de confidentialité — G-Desk</title>
+  <meta name="description" content="Politique de confidentialité du logiciel G-Desk et de son site web, conforme au RGPD et à la loi Informatique et Libertés.">
+  <link rel="icon" href="gdesk.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="gdesk.svg" alt="">G-Desk</a>
+      <nav>
+        <a href="./">Accueil</a>
+        <a href="mentions-legales.html">Mentions légales</a>
+        <a class="hide-sm" href="https://github.com/KrakenAgite/gdesk">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap legal">
+    <h1>Politique de confidentialité</h1>
+    <p class="updated">Dernière mise à jour : 25 septembre 2026</p>
+
+    <p>Cette politique explique quelles données personnelles sont traitées lorsque vous utilisez le logiciel
+      <strong>G-Desk</strong> et lorsque vous consultez son site web, et quels sont vos droits. Elle est établie
+      conformément au Règlement général sur la protection des données (RGPD, règlement (UE) 2016/679) et à la loi
+      n° 78-17 du 6 janvier 1978 relative à l'informatique, aux fichiers et aux libertés (« loi Informatique et
+      Libertés »).</p>
+
+    <nav class="toc" aria-label="Sommaire">
+      <ol>
+        <li><a href="#resume">En résumé</a></li>
+        <li><a href="#editeur">Qui est responsable ?</a></li>
+        <li><a href="#logiciel">Le logiciel G-Desk</a></li>
+        <li><a href="#google">Accès à votre compte Google</a></li>
+        <li><a href="#revocation">Révoquer l'accès et effacer les données</a></li>
+        <li><a href="#site">Le site web</a></li>
+        <li><a href="#contact">Signaler un problème, nous contacter</a></li>
+        <li><a href="#droits">Vos droits</a></li>
+        <li><a href="#modifications">Modifications</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="resume">1. En résumé</h2>
+    <ul>
+      <li>L'éditeur de G-Desk <strong>ne collecte aucune donnée</strong> : pas de compte, pas de serveur, pas de
+        statistiques d'utilisation, pas de publicité, pas de revente.</li>
+      <li>Vos e-mails circulent <strong>directement entre votre ordinateur et Google</strong>, au moyen d'un client OAuth
+        que vous créez vous-même dans votre propre projet Google Cloud.</li>
+      <li>Les rares informations conservées (jeton de connexion, réglages) restent <strong>sur votre ordinateur</strong>.</li>
+      <li>Le site web ne dépose <strong>aucun cookie</strong> et ne charge aucune ressource tierce. Son hébergeur,
+        GitHub, enregistre les adresses IP des visiteurs pour des raisons de sécurité.</li>
+    </ul>
+
+    <h2 id="editeur">2. Qui est responsable ?</h2>
+    <p>Le logiciel et le site sont édités à titre non professionnel par <strong>Gabriel Arthus</strong>, particulier
+      (voir les <a href="mentions-legales.html">mentions légales</a>). Contact : <a href="mailto:arthus.gab@gmail.com">arthus.gab@gmail.com</a>.</p>
+    <p>Gabriel Arthus est responsable des traitements décrits à la <a href="#contact">section 7</a> (échanges avec les
+      personnes qui le contactent). Il n'est <strong>pas</strong> responsable du traitement de vos e-mails : ceux-ci ne
+      lui sont jamais transmis (voir sections 3 et 4). Pour l'hébergement du site, c'est GitHub qui détermine les
+      traitements qu'il réalise (section 6).</p>
+
+    <h2 id="logiciel">3. Le logiciel G-Desk</h2>
+    <h3>3.1 Aucune collecte par l'éditeur</h3>
+    <p>G-Desk ne contient aucun mécanisme de télémétrie, de mesure d'audience, de rapport d'erreur automatique ni de
+      publicité. Il ne communique avec aucun serveur appartenant à l'éditeur. Son code source est public et peut être
+      vérifié sur <a href="https://github.com/KrakenAgite/gdesk">GitHub</a>.</p>
+
+    <h3>3.2 Données conservées sur votre ordinateur</h3>
+    <p>Pour fonctionner, G-Desk enregistre les informations suivantes, uniquement sur votre ordinateur :</p>
+    <table>
+      <thead><tr><th>Donnée</th><th>Utilité</th><th>Emplacement</th><th>Durée</th></tr></thead>
+      <tbody>
+        <tr><td>Jeton de rafraîchissement Google</td><td>Rester connecté sans ressaisir son mot de passe</td>
+          <td>Portefeuille KDE (KWallet) ; à défaut, fichier lisible par vous seul dans <code>~/.config/gdesk/</code></td>
+          <td>Jusqu'à la déconnexion depuis G-Desk ou la révocation chez Google</td></tr>
+        <tr><td>Identifiant et code secret de votre client OAuth</td><td>Se connecter à l'API Gmail</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
+        <tr><td>Adresses e-mail de vos correspondants (1 000 au maximum)</td><td>Proposer l'autocomplétion lors de la rédaction</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
+        <tr><td>Expéditeurs dont vous autorisez les images</td><td>Afficher automatiquement leurs images distantes</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
+        <tr><td>Pièces jointes que vous ouvrez</td><td>Les ouvrir avec l'application adaptée</td>
+          <td>Dossier temporaire du système (<code>/tmp</code>)</td><td>Effacées au redémarrage de l'ordinateur</td></tr>
+        <tr><td>Préférences d'affichage</td><td>Retrouver la taille de fenêtre et vos réglages</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
+      </tbody>
+    </table>
+    <p>Vos e-mails eux-mêmes ne sont <strong>pas</strong> stockés par G-Desk : ils sont téléchargés depuis Google à la
+      demande et affichés, puis oubliés à la fermeture du logiciel.</p>
+
+    <h3>3.3 Protection lors de la lecture</h3>
+    <p>Les messages sont affichés sans exécuter de JavaScript. Les images et contenus hébergés à l'extérieur du message
+      (souvent utilisés pour savoir si vous avez lu un e-mail) sont bloqués par défaut. Ils ne sont chargés que si
+      vous cliquez sur « Afficher les images ». Dans ce cas, le serveur de l'expéditeur reçoit votre adresse IP,
+      comme dans n'importe quel logiciel de messagerie.</p>
+
+    <h2 id="google">4. Accès à votre compte Google</h2>
+    <p>G-Desk accède à votre messagerie par l'<a href="https://developers.google.com/workspace/gmail/api">API Gmail</a>,
+      après votre autorisation explicite donnée sur la page de connexion de Google, dans votre navigateur. G-Desk ne
+      voit jamais votre mot de passe.</p>
+    <p>L'autorisation demandée est <code>https://www.googleapis.com/auth/gmail.modify</code>. Elle sert exclusivement
+      aux fonctions que vous utilisez dans le logiciel :</p>
+    <ul>
+      <li>lire la liste de vos dossiers, libellés et messages, et afficher les messages et pièces jointes ;</li>
+      <li>modifier l'état des messages : lu / non lu, suivi, archivage, spam, corbeille ;</li>
+      <li>envoyer les messages que vous rédigez et enregistrer vos brouillons.</li>
+    </ul>
+    <p>Ces échanges se font directement entre votre ordinateur et les serveurs de Google, au moyen du client OAuth de
+      <strong>votre</strong> projet Google Cloud. Google traite vos données en tant que responsable de traitement
+      indépendant, selon ses propres <a href="https://policies.google.com/privacy?hl=fr">règles de confidentialité</a>.
+      Lorsque vous utilisez G-Desk pour votre messagerie personnelle, il s'agit d'une activité strictement personnelle
+      ou domestique (article 2, paragraphe 2, point c du RGPD).</p>
+    <p><strong>Utilisation limitée.</strong> L'utilisation et le transfert, par G-Desk, des informations reçues des API
+      Google respectent la <a href="https://developers.google.com/terms/api-services-user-data-policy">politique de
+      Google relative aux données utilisateur des services d'API</a>, y compris ses exigences d'utilisation limitée
+      (« Limited Use »). Ces données ne sont utilisées que pour fournir les fonctions de messagerie visibles dans
+      G-Desk. Elles ne sont jamais transférées à des tiers, ni utilisées pour de la publicité, ni lues par un humain,
+      ni utilisées pour entraîner des modèles d'intelligence artificielle.</p>
+    <p lang="en"><em>G-Desk's use and transfer to any other app of information received from Google APIs will adhere
+      to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data
+      Policy</a>, including the Limited Use requirements.</em></p>
+
+    <h2 id="revocation">5. Révoquer l'accès et effacer les données</h2>
+    <ul>
+      <li><strong>Depuis G-Desk :</strong> menu du compte, puis « Se déconnecter ». Le jeton est révoqué auprès de
+        Google et supprimé de votre ordinateur.</li>
+      <li><strong>Depuis Google :</strong> à tout moment sur
+        <a href="https://myaccount.google.com/connections">myaccount.google.com/connections</a>.</li>
+      <li><strong>Effacer toutes les données locales :</strong> désinstallez le logiciel, puis supprimez le dossier
+        <code>~/.config/gdesk</code> et l'entrée « gdesk » de KWallet (avec l'application « Gestionnaire de
+        portefeuilles KDE »).</li>
+    </ul>
+
+    <h2 id="site">6. Le site web</h2>
+    <h3>6.1 Hébergement</h3>
+    <p>Ce site et les fichiers à télécharger sont hébergés par GitHub, Inc. (GitHub Pages et GitHub Releases). Selon
+      sa <a href="https://docs.github.com/fr/pages/getting-started-with-github-pages/what-is-github-pages#data-collection">documentation</a>,
+      GitHub enregistre l'adresse IP de chaque visiteur pour des raisons de sécurité, que le visiteur soit connecté ou non
+      à GitHub. GitHub détermine seul ces traitements, décrits dans sa
+      <a href="https://docs.github.com/fr/site-policy/privacy-policies/github-general-privacy-statement">déclaration
+      de confidentialité</a>. L'éditeur du site n'a pas accès à ces journaux.</p>
+    <p>GitHub étant établi aux États-Unis, ces données peuvent y être transférées. GitHub indique adhérer au cadre de
+      protection des données UE–États-Unis (« EU-U.S. Data Privacy Framework »), reconnu par la décision d'adéquation
+      de la Commission européenne du 10 juillet 2023.</p>
+
+    <h3>6.2 Cookies et traceurs</h3>
+    <p>Ce site ne dépose aucun cookie et n'utilise aucun traceur, outil de mesure d'audience, police de caractères
+      externe, bouton de réseau social ou vidéo intégrée. Aucun consentement n'est donc requis au titre de l'article 82
+      de la loi Informatique et Libertés.</p>
+
+    <h2 id="contact">7. Signaler un problème, nous contacter</h2>
+    <p>Vous pouvez contacter l'éditeur par e-mail à <a href="mailto:arthus.gab@gmail.com">arthus.gab@gmail.com</a> ou
+      ouvrir un ticket (« issue ») sur <a href="https://github.com/KrakenAgite/gdesk/issues">GitHub</a>.</p>
+    <table>
+      <thead><tr><th></th><th>Par e-mail</th><th>Par ticket GitHub</th></tr></thead>
+      <tbody>
+        <tr><td>Données traitées</td><td>Votre adresse e-mail, votre nom s'il apparaît et le contenu de votre message</td>
+          <td>Votre nom d'utilisateur GitHub et le contenu de votre ticket</td></tr>
+        <tr><td>Finalité</td><td colspan="2">Répondre à votre demande, corriger le logiciel</td></tr>
+        <tr><td>Base légale</td><td colspan="2">Intérêt légitime de l'éditeur à répondre aux utilisateurs et à améliorer le
+          logiciel (article 6, paragraphe 1, point f du RGPD) ; obligation légale pour les demandes d'exercice de droits</td></tr>
+        <tr><td>Visibilité</td><td>Seul l'éditeur lit votre message</td><td><strong>Public</strong> : visible par tous</td></tr>
+        <tr><td>Durée de conservation</td><td>3 ans après le dernier échange</td>
+          <td>Tant que le dépôt existe ; vous pouvez modifier ou supprimer vos commentaires à tout moment</td></tr>
+      </tbody>
+    </table>
+    <p>Les tickets GitHub étant publics, <strong>n'y indiquez aucune information personnelle</strong>. Pour toute
+      demande concernant vos données, écrivez plutôt par e-mail.</p>
+
+    <h2 id="droits">8. Vos droits</h2>
+    <p>Conformément aux articles 15 à 22 du RGPD, vous disposez des droits d'accès, de rectification, d'effacement, de
+      limitation du traitement, d'opposition et de portabilité de vos données. Conformément à l'article 85 de la loi
+      Informatique et Libertés, vous pouvez également définir des directives relatives au sort de vos données après
+      votre décès.</p>
+    <p>Pour exercer ces droits auprès de l'éditeur, écrivez à <a href="mailto:arthus.gab@gmail.com">arthus.gab@gmail.com</a>.
+      Une réponse vous sera apportée dans un délai d'un mois, qui peut être prolongé de deux mois en cas de demande
+      complexe (article 12 du RGPD). Pour les données traitées par Google ou GitHub, adressez-vous directement à eux
+      (voir leurs déclarations de confidentialité ci-dessus).</p>
+    <p>Si vous estimez que vos droits ne sont pas respectés, vous pouvez introduire une réclamation auprès de la
+      <strong>Commission nationale de l'informatique et des libertés (CNIL)</strong>, 3 place de Fontenoy,
+      TSA 80715, 75334 Paris Cedex 07, ou en ligne sur <a href="https://www.cnil.fr/fr/plaintes">cnil.fr</a>.</p>
+
+    <h2 id="modifications">9. Modifications</h2>
+    <p>Cette politique peut évoluer, par exemple si de nouvelles fonctions sont ajoutées au logiciel. La date de
+      dernière mise à jour figure en haut de la page. L'historique complet des modifications est public dans le
+      <a href="https://github.com/KrakenAgite/gdesk/commits/main/docs/confidentialite.html">dépôt GitHub</a>.</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="links">
+        <a href="./">Accueil</a>
+        <a href="mentions-legales.html">Mentions légales</a>
+        <a href="https://github.com/KrakenAgite/gdesk">Code source</a>
+      </div>
+      <p>© 2026 Gabriel Arthus — licence MIT. Gmail et Google sont des marques de Google LLC ; G-Desk n'est ni affilié à
+        Google ni approuvé par Google.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=G-Desk
+GenericName=Client mail Gmail
+Comment=Lire et envoyer vos e-mails Gmail avec l'API officielle de Google
+Exec=gdesk %u
+Icon=gdesk
+Terminal=false
+Categories=Network;Email;Qt;KDE;
+MimeType=x-scheme-handler/mailto;
+Keywords=gmail;google;mail;email;courriel;
+StartupWMClass=gdesk
+Actions=Compose;
+
+[Desktop Action Compose]
+Name=Nouveau message
+Exec=gdesk mailto:
