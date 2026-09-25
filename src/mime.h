@@ -27,7 +27,6 @@ struct MailMessage
     QList<Attachment> attachments;
 
     bool isUnread() const { return labelIds.contains("UNREAD"); }
-    bool isStarred() const { return labelIds.contains("STARRED"); }
 };
 
 struct OutgoingMail

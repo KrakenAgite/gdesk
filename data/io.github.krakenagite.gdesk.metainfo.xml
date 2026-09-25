@@ -48,6 +48,11 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.3.1" date="2026-09-25">
+      <description>
+        <p>Performance: the web engine starts only when a message is displayed and is released when the window is hidden; new mail is inserted without reloading the list; fewer and smaller requests to Gmail; lighter drawing of the list and sidebar.</p>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-09-25">
       <description>
         <p>Choose the folder shown at startup (or the last one used), and choose which folders and Gmail categories trigger notifications. Notifications show the category and open the right folder.</p>

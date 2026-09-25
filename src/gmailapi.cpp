@@ -66,19 +66,27 @@ void GmailApi::call(const QByteArray &verb, const QString &path, const QUrlQuery
     });
 }
 
+// Réponses partielles (paramètre « fields ») : Gmail n'envoie que les champs réellement utilisés
+static QUrlQuery fields(const char *list)
+{
+    QUrlQuery q;
+    q.addQueryItem("fields", list);
+    return q;
+}
+
 void GmailApi::getProfile(Callback cb)
 {
-    call("GET", "profile", {}, {}, cb);
+    call("GET", "profile", fields("emailAddress"), {}, cb);
 }
 
 void GmailApi::listLabels(Callback cb)
 {
-    call("GET", "labels", {}, {}, cb);
+    call("GET", "labels", fields("labels(id,name,type,color)"), {}, cb);
 }
 
 void GmailApi::getLabel(const QString &id, Callback cb)
 {
-    call("GET", "labels/" + QUrl::toPercentEncoding(id), {}, {}, cb);
+    call("GET", "labels/" + QUrl::toPercentEncoding(id), fields("id,messagesUnread,messagesTotal"), {}, cb);
 }
 
 static QUrlQuery messagesQuery(const QStringList &labelIds, const QString &query, const QString &pageToken,
@@ -94,6 +102,7 @@ static QUrlQuery messagesQuery(const QStringList &labelIds, const QString &query
     q.addQueryItem("maxResults", QString::number(maxResults));
     if (labelIds.contains("SPAM") || labelIds.contains("TRASH"))
         q.addQueryItem("includeSpamTrash", "true");
+    q.addQueryItem("fields", "messages/id,nextPageToken");
     return q;
 }
 
@@ -114,9 +123,11 @@ void GmailApi::getMessage(const QString &id, bool full, Callback cb)
 {
     QUrlQuery q;
     q.addQueryItem("format", full ? "full" : "metadata");
-    if (!full)
-        for (const char *h : {"From", "To", "Subject", "Date"})
+    if (!full) {
+        for (const char *h : {"From", "To", "Subject"})
             q.addQueryItem("metadataHeaders", h);
+        q.addQueryItem("fields", "id,threadId,labelIds,snippet,internalDate,payload/headers");
+    }
     call("GET", "messages/" + id, q, {}, cb);
 }
 

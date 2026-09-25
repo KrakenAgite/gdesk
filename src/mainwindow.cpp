@@ -17,8 +17,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
-#include <QFileInfo>
-#include <QHeaderView>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
@@ -32,7 +30,6 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
-#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -53,8 +50,6 @@ MainWindow::MainWindow()
     m_auth = new GoogleAuth(m_nam, this);
     m_api = new GmailApi(m_auth, m_nam, this);
     m_baseIcon = QIcon::fromTheme("gdesk", QIcon(":/gdesk.svg"));
-    m_knownAddresses = m_settings.value("known_addresses").toStringList();
-
     setWindowTitle("G-Desk");
     setWindowIcon(m_baseIcon);
     resize(1300, 820);
@@ -71,10 +66,15 @@ MainWindow::MainWindow()
     m_pollTimer = new QTimer(this);
     m_pollTimer->setInterval(60 * 1000);
     connect(m_pollTimer, &QTimer::timeout, this, &MainWindow::checkNewMail);
+    m_addressSaveTimer = new QTimer(this);
+    m_addressSaveTimer->setSingleShot(true);
+    m_addressSaveTimer->setInterval(3000);
+    connect(m_addressSaveTimer, &QTimer::timeout, this,
+            [this] { m_settings.setValue("known_addresses", m_knownAddresses); });
     m_countsTimer = new QTimer(this);
     m_countsTimer->setSingleShot(true);
     m_countsTimer->setInterval(800);
-    connect(m_countsTimer, &QTimer::timeout, this, &MainWindow::refreshCounts);
+    connect(m_countsTimer, &QTimer::timeout, this, [this] { refreshCounts(); });
     applySettings();
 
     connect(m_auth, &GoogleAuth::loggedIn, this, &MainWindow::onLoggedIn);
@@ -117,7 +117,7 @@ void MainWindow::buildActions()
         addAction(a);
         return a;
     };
-    m_actNew = make("mail-message-new", "Nouveau", QKeySequence("Ctrl+N"), [this] { compose(Composer::New); });
+    make("mail-message-new", "Nouveau", QKeySequence("Ctrl+N"), [this] { compose(Composer::New); });
     m_actReply = make("mail-reply-sender", "Répondre", QKeySequence("Ctrl+R"), [this] { compose(Composer::Reply); });
     m_actReplyAll = make("mail-reply-all", "Répondre à tous", QKeySequence("Ctrl+Shift+R"),
                          [this] { compose(Composer::ReplyAll); });
@@ -357,10 +357,8 @@ QWidget *MainWindow::buildMailPage()
     connect(m_view, &MessageView::remoteContentAllowed, this, [this](bool always) {
         MailMessage m = m_view->message();
         if (always) {
-            QStringList trusted = m_settings.value("trusted_senders").toStringList();
-            trusted << Mime::emailOnly(m.from).toLower();
-            trusted.removeDuplicates();
-            m_settings.setValue("trusted_senders", trusted);
+            m_trustedSenders.insert(Mime::emailOnly(m.from).toLower());
+            m_settings.setValue("trusted_senders", QStringList(m_trustedSenders.begin(), m_trustedSenders.end()));
         }
         m_view->showMessage(m, true);
     });
@@ -550,7 +548,10 @@ void MainWindow::applySettings()
         m_unreadSeeded = false;
         ++m_pollGeneration;
     }
-    m_knownAddresses = m_settings.value("known_addresses").toStringList();
+    if (!m_addressSaveTimer->isActive()) // sinon des adresses non encore enregistrées seraient perdues
+        setKnownAddresses(m_settings.value("known_addresses").toStringList());
+    const QStringList trusted = m_settings.value("trusted_senders").toStringList();
+    m_trustedSenders = QSet<QString>(trusted.begin(), trusted.end());
 
     // Réaffiche le message ouvert avec les nouveaux réglages d'images
     if (!m_view->message().id.isEmpty())
@@ -750,11 +751,13 @@ void MainWindow::scheduleCountsRefresh()
     m_countsTimer->start();
 }
 
-void MainWindow::refreshCounts()
+void MainWindow::refreshCounts(const QStringList &only)
 {
     for (auto it = m_folderItems.cbegin(); it != m_folderItems.cend(); ++it) {
         const QString id = it.key();
         if (id.isEmpty() || id == "SENT" || id == "TRASH" || id == "STARRED" || id == "IMPORTANT")
+            continue;
+        if (!only.isEmpty() && !only.contains(id))
             continue;
         m_api->getLabel(id, [this, id](const QJsonObject &l, const QString &err) {
             QTreeWidgetItem *item = m_folderItems.value(id);
@@ -811,8 +814,7 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
 {
     m_loadingList = true;
     statusBar()->showMessage("Chargement…");
-    const QStringList labels = (!m_query.isEmpty() || m_currentLabel.isEmpty()) ? QStringList() : QStringList{m_currentLabel};
-    m_api->listMessages(labels, m_query, m_nextPageToken, 50,
+    m_api->listMessages(currentListLabels(), m_query, m_nextPageToken, 50,
                         [this, generation, keepSelected](const QJsonObject &obj, const QString &err) {
         if (generation != m_generation)
             return;
@@ -843,16 +845,57 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
                 m_list->setCurrentItem(item);
                 m_restoringSelection = false;
             }
-            m_api->getMessage(id, false, [this, generation, id](const QJsonObject &o, const QString &e) {
-                if (generation != m_generation || !e.isEmpty())
-                    return;
-                if (QTreeWidgetItem *it = m_rows.value(id))
-                    fillRow(it, Mime::parseMessage(o));
-            });
+            loadRowMetadata(id, generation);
         }
         if (selectAllAfter)
             checkWhere([](const QStringList &) { return true; });
         updateSelectionBar();
+    });
+}
+
+QStringList MainWindow::currentListLabels() const
+{
+    return (!m_query.isEmpty() || m_currentLabel.isEmpty()) ? QStringList() : QStringList{m_currentLabel};
+}
+
+void MainWindow::loadRowMetadata(const QString &id, int generation)
+{
+    m_api->getMessage(id, false, [this, generation, id](const QJsonObject &o, const QString &e) {
+        if (generation != m_generation || !e.isEmpty())
+            return;
+        if (QTreeWidgetItem *it = m_rows.value(id))
+            fillRow(it, Mime::parseMessage(o));
+    });
+}
+
+// Nouveaux messages : on les insère en haut de la liste au lieu de tout recharger
+// (1 requête + 1 par nouveau message, au lieu de 51 ; sélection et défilement conservés)
+void MainWindow::insertNewMessages()
+{
+    const int generation = m_generation;
+    m_api->listMessages(currentListLabels(), m_query, {}, 50,
+                        [this, generation](const QJsonObject &obj, const QString &err) {
+        if (generation != m_generation || !err.isEmpty())
+            return;
+        int insertAt = 0;
+        bool added = false;
+        for (const QJsonValue &v : obj.value("messages").toArray()) {
+            const QString id = v.toObject().value("id").toString();
+            if (QTreeWidgetItem *known = m_rows.value(id)) {
+                insertAt = m_list->indexOfTopLevelItem(known) + 1;
+                continue;
+            }
+            auto *item = new QTreeWidgetItem;
+            item->setData(0, MailRoles::Id, id);
+            m_list->insertTopLevelItem(insertAt++, item);
+            m_rows.insert(id, item);
+            loadRowMetadata(id, generation);
+            added = true;
+        }
+        if (added) {
+            m_lastCheckedRow = -1; // les numéros de ligne ont changé
+            updateSelectionBar();
+        }
     });
 }
 
@@ -959,8 +1002,8 @@ void MainWindow::openMessage(const QString &id)
         auto remaining = std::make_shared<int>(pending.size());
         for (int i : pending) {
             m_api->getAttachment(id, m.attachments.at(i).attachmentId,
-                                 [this, id, i, shared, remaining](const QByteArray &data, const QString &) {
-                                     shared->attachments[i].data = data;
+                                 [this, id, i, shared, remaining](const QByteArray &bytes, const QString &) {
+                                     shared->attachments[i].data = bytes;
                                      if (--*remaining == 0 && id == m_openId)
                                          displayMessage(*shared);
                                  });
@@ -983,8 +1026,7 @@ void MainWindow::markRead(const QString &id)
 
 void MainWindow::displayMessage(const MailMessage &m)
 {
-    const QStringList trusted = m_settings.value("trusted_senders").toStringList();
-    m_view->showMessage(m, m_remoteMode == "always" || trusted.contains(Mime::emailOnly(m.from).toLower()));
+    m_view->showMessage(m, m_remoteMode == "always" || m_trustedSenders.contains(Mime::emailOnly(m.from).toLower()));
     rememberAddresses(m.from + "," + m.to + "," + m.cc);
     updateActions();
 }
@@ -996,24 +1038,25 @@ void MainWindow::rememberAddresses(const QString &addresses)
     for (const QString &a : Mime::splitAddresses(addresses)) {
         const QString email = Mime::emailOnly(a).toLower();
         if (email.isEmpty() || email == me || !email.contains('@') || email.contains("noreply")
-            || email.contains("no-reply"))
+            || email.contains("no-reply") || m_knownEmails.contains(email))
             continue;
-        bool known = false;
-        for (const QString &k : std::as_const(m_knownAddresses))
-            if (Mime::emailOnly(k).toLower() == email) {
-                known = true;
-                break;
-            }
-        if (!known) {
-            m_knownAddresses.prepend(a.trimmed());
-            changed = true;
-        }
+        m_knownEmails.insert(email);
+        m_knownAddresses.prepend(a.trimmed());
+        changed = true;
     }
-    if (changed) {
-        while (m_knownAddresses.size() > 1000)
-            m_knownAddresses.removeLast();
-        m_settings.setValue("known_addresses", m_knownAddresses);
-    }
+    if (!changed)
+        return;
+    while (m_knownAddresses.size() > 1000)
+        m_knownEmails.remove(Mime::emailOnly(m_knownAddresses.takeLast()).toLower());
+    m_addressSaveTimer->start(); // une seule écriture pour toute une page de messages
+}
+
+void MainWindow::setKnownAddresses(const QStringList &addresses)
+{
+    m_knownAddresses = addresses;
+    m_knownEmails.clear();
+    for (const QString &a : addresses)
+        m_knownEmails.insert(Mime::emailOnly(a).toLower());
 }
 
 void MainWindow::fetchAttachment(int index, std::function<void(const QByteArray &)> cb)
@@ -1027,12 +1070,12 @@ void MainWindow::fetchAttachment(int index, std::function<void(const QByteArray 
         return;
     }
     statusBar()->showMessage("Téléchargement de " + a.filename + "…");
-    m_api->getAttachment(m.id, a.attachmentId, [this, cb](const QByteArray &data, const QString &err) {
+    m_api->getAttachment(m.id, a.attachmentId, [this, cb](const QByteArray &bytes, const QString &err) {
         statusBar()->clearMessage();
         if (!err.isEmpty())
             showError("Téléchargement impossible", err);
         else
-            cb(data);
+            cb(bytes);
     });
 }
 
@@ -1051,9 +1094,9 @@ void MainWindow::saveAttachment(int index)
     const QString path = QFileDialog::getSaveFileName(this, "Enregistrer la pièce jointe", dir + "/" + name);
     if (path.isEmpty())
         return;
-    fetchAttachment(index, [this, path](const QByteArray &data) {
+    fetchAttachment(index, [this, path](const QByteArray &bytes) {
         QFile f(path);
-        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size())
+        if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size())
             showError("Enregistrement impossible", f.errorString());
         else
             statusBar()->showMessage("Enregistré : " + path, 5000);
@@ -1063,12 +1106,12 @@ void MainWindow::saveAttachment(int index)
 void MainWindow::openAttachment(int index)
 {
     const QString name = safeFileName(m_view->message().attachments.value(index).filename);
-    fetchAttachment(index, [this, name](const QByteArray &data) {
+    fetchAttachment(index, [this, name](const QByteArray &bytes) {
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
                             + QString("/gdesk-%1").arg(QCoreApplication::applicationPid());
         QDir().mkpath(dir);
         QFile f(dir + "/" + name);
-        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size()) {
+        if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size()) {
             showError("Ouverture impossible", f.errorString());
             return;
         }
@@ -1453,8 +1496,8 @@ void MainWindow::compose(Composer::Mode mode)
     auto remaining = std::make_shared<int>(pending.size());
     for (int i : pending)
         m_api->getAttachment(m.id, m.attachments.at(i).attachmentId,
-                             [shared, remaining, i, open](const QByteArray &data, const QString &) {
-                                 shared->attachments[i].data = data;
+                             [shared, remaining, i, open](const QByteArray &bytes, const QString &) {
+                                 shared->attachments[i].data = bytes;
                                  if (--*remaining == 0)
                                      open();
                              });
@@ -1507,15 +1550,22 @@ void MainWindow::checkNewMail()
             for (auto it = fresh->cbegin(); it != fresh->cend(); ++it)
                 m_knownUnread.insert(it.key());
             m_unreadSeeded = true; // la première relève ne fait que mémoriser l'existant
-            refreshCounts();
+            // Compteurs : la réception (pastille) à chaque relève ; les ~15 boîtes seulement
+            // s'il y a du nouveau ou toutes les 5 relèves (lectures faites ailleurs)
+            if (!fresh->isEmpty() || ++m_pollsSinceCounts >= 5) {
+                m_pollsSinceCounts = 0;
+                refreshCounts();
+            } else {
+                refreshCounts({"INBOX"});
+            }
             if (!seeded || fresh->isEmpty())
                 return;
 
             bool currentHit = false;
             for (const QStringList &boxes : std::as_const(*fresh))
                 currentHit |= boxes.contains(m_currentLabel);
-            if (currentHit && m_query.isEmpty() && m_list->verticalScrollBar()->value() < 20)
-                reloadList(m_openId);
+            if (currentHit && m_query.isEmpty())
+                insertNewMessages();
 
             if (!m_notificationsOn)
                 return;
@@ -1886,6 +1936,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::quitApp()
 {
+    if (m_addressSaveTimer->isActive()) {
+        m_addressSaveTimer->stop();
+        m_settings.setValue("known_addresses", m_knownAddresses);
+    }
     if (!m_quitting) {
         m_quitting = true;
         close();

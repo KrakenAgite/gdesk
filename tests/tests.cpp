@@ -48,6 +48,7 @@
 #include <QSet>
 #include <QStyleOptionViewItem>
 #include <QTest>
+#include <QTextDocumentFragment>
 #include <QUrlQuery>
 #include <QWebEnginePage>
 #include <QWebEngineScript>
@@ -90,6 +91,8 @@ public:
     QStringList order;
     QList<Batch> batches;
     QStringList trashed;
+    QStringList metadataRequests; // identifiants dont les détails ont été demandés
+    QStringList listFields;       // paramètre « fields » des listes
 
     FakeGmail()
     {
@@ -102,10 +105,13 @@ public:
         });
     }
     QString base() const { return QString("http://127.0.0.1:%1/gmail/v1/users/me/").arg(server.serverPort()); }
-    void add(const QString &id, const QSet<QString> &labels)
+    void add(const QString &id, const QSet<QString> &labels, bool newest = false)
     {
         messages.insert(id, labels);
-        order << id;
+        if (newest)
+            order.prepend(id);
+        else
+            order << id;
     }
     int count(const QStringList &labels) const
     {
@@ -133,6 +139,7 @@ private:
                     continue;
                 hits << id;
             }
+            listFields << q.queryItemValue("fields", QUrl::FullyDecoded);
             const int offset = q.queryItemValue("pageToken").toInt();
             const int max = q.queryItemValue("maxResults").toInt();
             QJsonArray page;
@@ -168,6 +175,7 @@ private:
         }
         if (method == "GET" && path.startsWith("messages/")) {
             const QString id = path.section('/', 1, 1);
+            metadataRequests << id;
             QJsonArray labels;
             for (const QString &l : messages.value(id))
                 labels.append(l);
@@ -339,6 +347,21 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         QVERIFY(!url.toEncoded().contains(' '));
     }
 
+    void snippetEntities()
+    {
+        const QStringList samples = {
+            "L&#39;été &amp; l&#39;hiver", "&quot;Promo&quot; -50% &lt;aujourd&#39;hui&gt;",
+            "Caf&#233; &#x1F600; &#128512;", "Rien à décoder 😀", "5&nbsp;€ &amp;amp; &unknown; & fin",
+            "&#39;&#39;&#39;", "b &#99999999; c"};
+        for (const QString &s : samples) {
+            QJsonObject json{{"id", "m"}, {"snippet", s}};
+            const QString expected = QTextDocumentFragment::fromHtml(s).toPlainText().replace(QChar(0xA0), ' ');
+            QCOMPARE(Mime::parseMessage(json).snippet, expected);
+        }
+        // Différence voulue avec QTextDocument : pas de caractère nul inséré
+        QCOMPARE(Mime::parseMessage(QJsonObject{{"id", "m"}, {"snippet", "a &#0; b"}}).snippet, QString("a &#0; b"));
+    }
+
     void dates()
     {
         QLocale::setDefault(QLocale(QLocale::French, QLocale::France));
@@ -491,7 +514,8 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
 
         MessageView view;
         view.resize(800, 600);
-        auto *web = view.findChild<QWebEngineView *>();
+        QVERIFY(!view.findChild<QWebEngineView *>()); // moteur web créé seulement à la demande
+        auto *web = view.ensureEngine();
         QVERIFY(web);
 
         auto inspect = [&](bool allowRemote) {
@@ -1141,6 +1165,73 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         QCOMPARE(list->topLevelItemCount(), 10);
         QCOMPARE(checked().size(), 0);
         QVERIFY(!button("Non lu")->isVisible());
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void lazyWebEngine()
+    {
+        MessageView view;
+        view.resize(600, 400);
+        view.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+        QVERIFY(!view.hasEngine());
+        QVERIFY(!view.findChild<QWebEngineView *>());
+
+        MailMessage m;
+        m.id = "a";
+        m.subject = "Test";
+        m.text = "Bonjour";
+        view.showMessage(m, false);
+        QVERIFY(view.hasEngine());
+        QSignalSpy loaded(view.findChild<QWebEngineView *>(), &QWebEngineView::loadFinished);
+        QVERIFY(loaded.wait(15000));
+
+        // Fenêtre cachée : le moteur est libéré (ici immédiatement plutôt qu'après 1 minute)
+        view.hide();
+        view.releaseEngine();
+        QVERIFY(!view.hasEngine());
+        QVERIFY(!view.findChild<QWebEngineView *>());
+        // Réaffichée : le message est redessiné avec un nouveau moteur
+        view.show();
+        QVERIFY(view.hasEngine());
+        QCOMPARE(view.message().id, QString("a"));
+    }
+
+    void incrementalNewMail()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 12; ++i)
+            gmail.add(QString("m%1").arg(i), {"INBOX"});
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+
+        MainWindow win;
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        QTreeWidget *list = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                list = t;
+        win.folderMenu("INBOX")->actions().first()->trigger(); // charge la réception
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.metadataRequests.size(), 12, 10000);
+        QVERIFY(gmail.listFields.first().contains("messages/id")); // réponse partielle demandée
+
+        // Deux nouveaux messages arrivent
+        gmail.add("new1", {"INBOX", "UNREAD"}, true);
+        gmail.add("new2", {"INBOX", "UNREAD"}, true);
+        gmail.metadataRequests.clear();
+        win.insertNewMessages();
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 14, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.metadataRequests.size(), 2, 10000);
+        QCOMPARE(QSet<QString>(gmail.metadataRequests.begin(), gmail.metadataRequests.end()),
+                 (QSet<QString>{"new1", "new2"})); // seuls les nouveaux sont demandés
+        QCOMPARE(list->topLevelItem(0)->data(0, MailRoles::Id).toString(), QString("new2"));
+        QCOMPARE(list->topLevelItem(1)->data(0, MailRoles::Id).toString(), QString("new1"));
+        QCOMPARE(list->topLevelItem(2)->data(0, MailRoles::Id).toString(), QString("m0"));
+        // Les anciennes lignes, cochées ou non, sont conservées telles quelles
+        QCOMPARE(list->topLevelItem(13)->data(0, MailRoles::Id).toString(), QString("m11"));
 
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});

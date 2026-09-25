@@ -1,13 +1,11 @@
 #include "theme.h"
 
 #include <QApplication>
-#include <QDir>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QFontInfo>
 #include <QIcon>
-#include <QStandardPaths>
 #include <QStyleHints>
 #include <QWidget>
 

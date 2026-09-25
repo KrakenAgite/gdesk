@@ -5,7 +5,6 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -317,7 +316,7 @@ QWidget *SettingsDialog::displayPage()
     m_zoom->setTickPosition(QSlider::TicksBelow);
     m_zoomLabel = new QLabel;
     m_zoomLabel->setMinimumWidth(48);
-    connect(m_zoom, &QSlider::valueChanged, this, [this](int v) { m_zoomLabel->setText(QString("%1 %").arg(v * 10)); });
+    connect(m_zoom, &QSlider::valueChanged, this, [this](int value) { m_zoomLabel->setText(QString("%1 %").arg(value * 10)); });
     rv->addWidget(m_zoom, 1);
     rv->addWidget(m_zoomLabel);
     v->addWidget(readBox);

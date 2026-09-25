@@ -47,6 +47,17 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    // Polices et métriques dérivées de la police de la liste, recalculées seulement si elle change
+    struct Fonts {
+        QFont normal, bold, small, smallBold;
+        int normalH, boldH, smallH;
+    };
+    const Fonts &fonts(const QFont &base) const;
+    mutable Fonts m_fonts;
+    mutable QString m_fontsKey;
+    mutable QIcon m_starOn, m_starOff;
+    mutable QString m_iconTheme;
+
     QAbstractItemView *m_view = nullptr;
     int padding() const;
     int snippetLines() const;

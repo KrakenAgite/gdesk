@@ -43,6 +43,22 @@ QFont smallFont(QFont f)
 }
 } // namespace
 
+const MailListDelegate::Fonts &MailListDelegate::fonts(const QFont &base) const
+{
+    const QString key = base.key();
+    if (key != m_fontsKey) {
+        m_fontsKey = key;
+        m_fonts.normal = base;
+        m_fonts.bold = boldFont(base);
+        m_fonts.small = smallFont(base);
+        m_fonts.smallBold = boldFont(m_fonts.small);
+        m_fonts.normalH = QFontMetrics(m_fonts.normal).height();
+        m_fonts.boldH = QFontMetrics(m_fonts.bold).height();
+        m_fonts.smallH = QFontMetrics(m_fonts.small).height();
+    }
+    return m_fonts;
+}
+
 int MailListDelegate::padding() const
 {
     return density == "compact" ? 5 : density == "spacious" ? 12 : 8;
@@ -57,12 +73,10 @@ int MailListDelegate::snippetLines() const
 
 QSize MailListDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &) const
 {
-    const QFontMetrics bold(boldFont(option.font));
-    const QFontMetrics normal(option.font);
-    const QFontMetrics small(smallFont(option.font));
-    int h = bold.height() + LineGap + normal.height();
+    const Fonts &f = fonts(option.font);
+    int h = f.boldH + LineGap + f.normalH;
     if (snippetLines() > 0)
-        h += LineGap + snippetLines() * small.height();
+        h += LineGap + snippetLines() * f.smallH;
     return {200, h + 2 * padding() + 2 * CardMarginV};
 }
 
@@ -117,10 +131,9 @@ bool MailListDelegate::eventFilter(QObject *watched, QEvent *event)
 QRect MailListDelegate::starRect(const QStyleOptionViewItem &option) const
 {
     const QRect card = cardRect(option.rect);
-    const QFontMetrics bold(boldFont(option.font));
-    const QFontMetrics normal(option.font);
-    const int line2Top = card.top() + padding() + bold.height() + LineGap;
-    return {card.right() - padding() - StarSize + 1, line2Top + (normal.height() - StarSize) / 2, StarSize, StarSize};
+    const Fonts &f = fonts(option.font);
+    const int line2Top = card.top() + padding() + f.boldH + LineGap;
+    return {card.right() - padding() - StarSize + 1, line2Top + (f.normalH - StarSize) / 2, StarSize, StarSize};
 }
 
 void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const
@@ -161,9 +174,10 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     }
 
     const QRect content = cardRect(option.rect).adjusted(DotSpace, padding(), -padding(), -padding());
-    const QFont normalFont = option.font;
-    const QFont bold = boldFont(option.font);
-    const QFont small = smallFont(option.font);
+    const Fonts &f = fonts(option.font);
+    const QFont &normalFont = f.normal;
+    const QFont &bold = f.bold;
+    const QFont &small = f.small;
     const QFontMetrics fmBold(bold), fmNormal(normalFont), fmSmall(small);
 
     // Case à cocher (au survol, ou partout dès qu'un message est coché), sinon point « non lu »
@@ -196,8 +210,7 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
 
     // Ligne 1 : expéditeur en gras, date à droite
     const QString date = index.data(MailRoles::Date).toString();
-    QFont dateFont = small;
-    dateFont.setBold(unread);
+    const QFont &dateFont = unread ? f.smallBold : small;
     const QFontMetrics fmDate(dateFont);
     const int dateWidth = fmDate.horizontalAdvance(date);
     const QRect line1(content.left(), content.top(), content.width(), fmBold.height());
@@ -214,8 +227,8 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     const bool showStar = starred || hovered;
     const QRect line2(content.left(), line1.bottom() + 1 + LineGap,
                       content.width() - (showStar ? StarSize + 6 : 0), fmNormal.height());
-    const QFont subjectFont = unread ? boldFont(normalFont) : normalFont;
-    const QFontMetrics fmSubject(subjectFont);
+    const QFont &subjectFont = unread ? bold : normalFont;
+    const QFontMetrics &fmSubject = unread ? fmBold : fmNormal;
     const QString subjectText = fmSubject.elidedText(subject, Qt::ElideRight, line2.width());
     p->setFont(subjectFont);
     p->setPen(text);
@@ -234,7 +247,12 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     }
 
     if (showStar) {
-        const QIcon icon = QIcon::fromTheme(starred ? "rating" : "rating-unrated");
+        if (m_iconTheme != QIcon::themeName()) { // icônes de l'étoile, rechargées si le thème change
+            m_iconTheme = QIcon::themeName();
+            m_starOn = QIcon::fromTheme("rating");
+            m_starOff = QIcon::fromTheme("rating-unrated");
+        }
+        const QIcon &icon = starred ? m_starOn : m_starOff;
         if (!icon.isNull()) {
             p->setOpacity(starred ? 1.0 : 0.45);
             icon.paint(p, star);
@@ -248,7 +266,12 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
 
     // Lignes 3 (et 4) : début du message, coupé proprement
     const int lines = snippetLines();
-    if (lines > 0 && !snippet.isEmpty()) {
+    if (lines == 1 && !snippet.isEmpty()) {
+        p->setFont(small);
+        p->setPen(muted);
+        p->drawText(QRect(content.left(), line2.bottom() + 1 + LineGap, content.width(), fmSmall.height()),
+                    Qt::AlignLeft | Qt::AlignVCenter, fmSmall.elidedText(snippet, Qt::ElideRight, content.width()));
+    } else if (lines > 1 && !snippet.isEmpty()) {
         p->setFont(small);
         p->setPen(muted);
         QTextLayout layout(snippet, small);

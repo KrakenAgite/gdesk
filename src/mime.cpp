@@ -1,12 +1,12 @@
 #include "mime.h"
 
+#include <QHash>
 #include <QJsonArray>
 #include <QLocale>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QStringDecoder>
 #include <QTextDocument>
-#include <QTextDocumentFragment>
 #include <QUrl>
 
 namespace {
@@ -134,6 +134,42 @@ void walk(const QJsonObject &part, MailMessage &m)
         m.text += text;
 }
 
+// Entités HTML des extraits Gmail (&#39; &quot; &amp; &lt; &gt; &nbsp; &#233; &#x1F600;…).
+// Bien plus léger qu'un QTextDocument, créé auparavant pour chaque carte de la liste.
+QString decodeEntities(const QString &text)
+{
+    if (!text.contains('&'))
+        return text;
+    static const QHash<QString, QString> named = {
+        {"amp", "&"}, {"lt", "<"}, {"gt", ">"}, {"quot", "\""}, {"apos", "'"}, {"nbsp", QString(QChar(0xA0))}};
+    QString out;
+    out.reserve(text.size());
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        const qsizetype end = text.at(i) == '&' ? text.indexOf(';', i + 1) : -1;
+        if (end < 0 || end - i > 10) {
+            out += text.at(i);
+            continue;
+        }
+        const QString entity = text.mid(i + 1, end - i - 1);
+        bool ok = false;
+        uint code = 0;
+        if (entity.startsWith("#x", Qt::CaseInsensitive))
+            code = entity.mid(2).toUInt(&ok, 16);
+        else if (entity.startsWith('#'))
+            code = entity.mid(1).toUInt(&ok, 10);
+        if (ok && code > 0 && code <= 0x10FFFF) {
+            out += QString::fromUcs4(reinterpret_cast<const char32_t *>(&code), 1);
+        } else if (const auto it = named.constFind(entity); it != named.constEnd()) {
+            out += *it;
+        } else {
+            out += text.at(i);
+            continue;
+        }
+        i = end;
+    }
+    return out.replace(QChar(0xA0), ' ');
+}
+
 bool isPlainAscii(const QString &s)
 {
     for (QChar c : s)
@@ -215,7 +251,7 @@ MailMessage parseMessage(const QJsonObject &json)
     m.id = json.value("id").toString();
     m.threadId = json.value("threadId").toString();
     // L'extrait est fourni avec des entités HTML (&#39; …)
-    m.snippet = QTextDocumentFragment::fromHtml(json.value("snippet").toString()).toPlainText();
+    m.snippet = decodeEntities(json.value("snippet").toString());
     for (const QJsonValue &l : json.value("labelIds").toArray())
         m.labelIds << l.toString();
     m.date = QDateTime::fromMSecsSinceEpoch(json.value("internalDate").toString().toLongLong());

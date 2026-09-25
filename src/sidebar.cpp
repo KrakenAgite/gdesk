@@ -2,7 +2,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
-#include <QTreeWidget>
+#include <QPixmapCache>
 
 namespace {
 QColor mix(const QColor &a, const QColor &b, double t)
@@ -57,12 +57,19 @@ QIcon folderIcon(const QString &iconName)
 
 QPixmap tintedIcon(const QIcon &icon, int size, const QColor &color, qreal dpr)
 {
-    QPixmap pm = icon.pixmap(QSize(size, size), dpr);
+    // Mise en cache : la barre latérale redessine ses icônes à chaque survol
+    const QString key = QString("gdesk-tint-%1-%2-%3-%4").arg(icon.cacheKey()).arg(color.rgba()).arg(size).arg(dpr);
+    QPixmap pm;
+    if (QPixmapCache::find(key, &pm))
+        return pm;
+    pm = icon.pixmap(QSize(size, size), dpr);
     if (pm.isNull())
         return pm;
     QPainter p(&pm);
     p.setCompositionMode(QPainter::CompositionMode_SourceIn);
     p.fillRect(pm.rect(), color);
+    p.end();
+    QPixmapCache::insert(key, pm);
     return pm;
 }
 

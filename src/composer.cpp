@@ -20,7 +20,6 @@
 #include <QMimeDatabase>
 #include <QPlainTextEdit>
 #include <QStatusBar>
-#include <QStringListModel>
 #include <QToolBar>
 #include <QToolButton>
 #include <QUrlQuery>

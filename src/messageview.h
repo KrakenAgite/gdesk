@@ -29,6 +29,13 @@ public:
     const MailMessage &message() const { return m_message; }
     void setZoom(double factor);
     void setDarkContent(bool dark); // convertit les e-mails en couleurs sombres
+    QWebEngineView *ensureEngine();  // crée le moteur web à la demande
+    void releaseEngine();            // libère le moteur web (processus Chromium)
+    bool hasEngine() const { return m_web != nullptr; }
+
+protected:
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 signals:
     void saveAttachmentRequested(int index);
@@ -41,6 +48,8 @@ private:
 
     MailMessage m_message;
     bool m_allowRemote = false;
+    bool m_darkContent = false;
+    double m_zoom = 1.0;
     int m_loadCounter = 0;
 
     QStackedWidget *m_stack;
@@ -48,8 +57,10 @@ private:
     QWidget *m_attachmentBar;
     QHBoxLayout *m_attachmentLayout;
     QWidget *m_remoteBar;
-    QWebEngineProfile *m_profile;
-    QWebEngineView *m_web;
+    QWebEngineProfile *m_profile = nullptr;
+    QWebEngineView *m_web = nullptr;
+    class QVBoxLayout *m_bodyLayout;
+    class QTimer *m_releaseTimer;
     MailSchemeHandler *m_handler;
     RemoteBlocker *m_blocker;
 };

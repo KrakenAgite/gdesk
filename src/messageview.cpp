@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWebEnginePage>
@@ -196,10 +197,29 @@ MessageView::MessageView(QWidget *parent) : QWidget(parent)
     connect(showAlways, &QPushButton::clicked, this, [this] { emit remoteContentAllowed(true); });
     v->addWidget(m_remoteBar);
 
-    // --- corps ---
-    m_profile = new QWebEngineProfile(this); // hors ligne, sans cookies persistants
+    // --- corps : le moteur web (Chromium, plusieurs processus) n'est créé qu'à l'affichage
+    // d'un message, et libéré quand la fenêtre reste cachée (voir ensureEngine / releaseEngine)
     m_handler = new MailSchemeHandler(this);
     m_blocker = new RemoteBlocker(this);
+    m_bodyLayout = v;
+    m_stack->addWidget(content);
+
+    m_releaseTimer = new QTimer(this);
+    m_releaseTimer->setSingleShot(true);
+    m_releaseTimer->setInterval(60 * 1000);
+    connect(m_releaseTimer, &QTimer::timeout, this, &MessageView::releaseEngine);
+}
+
+MessageView::~MessageView()
+{
+    releaseEngine();
+}
+
+QWebEngineView *MessageView::ensureEngine()
+{
+    if (m_web)
+        return m_web;
+    m_profile = new QWebEngineProfile(this); // hors ligne, sans cookies persistants
     m_profile->installUrlSchemeHandler(Scheme, m_handler);
     m_profile->setUrlRequestInterceptor(m_blocker);
     QWebEngineSettings *s = m_profile->settings();
@@ -207,32 +227,56 @@ MessageView::MessageView(QWidget *parent) : QWidget(parent)
     s->setAttribute(QWebEngineSettings::PluginsEnabled, false);
     s->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
     s->setAttribute(QWebEngineSettings::AutoLoadIconsForPage, false);
+    s->setAttribute(QWebEngineSettings::ForceDarkMode, m_darkContent);
 
     m_web = new QWebEngineView;
     m_web->setPage(new MailPage(m_profile, this));
     m_web->page()->setParent(m_web);
     m_web->setContextMenuPolicy(Qt::NoContextMenu);
-    v->addWidget(m_web, 1);
-    m_stack->addWidget(content);
+    m_web->setZoomFactor(m_zoom);
+    m_bodyLayout->addWidget(m_web, 1);
+    return m_web;
 }
 
-MessageView::~MessageView()
+void MessageView::releaseEngine()
 {
+    if (!m_web)
+        return;
     delete m_web; // la page doit disparaître avant son profil
+    delete m_profile;
+    m_web = nullptr;
+    m_profile = nullptr;
+}
+
+void MessageView::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    m_releaseTimer->stop();
+    if (!m_web && !m_message.id.isEmpty())
+        render(); // moteur libéré pendant que la fenêtre était cachée
+}
+
+void MessageView::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    m_releaseTimer->start();
 }
 
 void MessageView::setZoom(double factor)
 {
-    m_web->setZoomFactor(factor);
+    m_zoom = factor;
+    if (m_web)
+        m_web->setZoomFactor(factor);
 }
 
 void MessageView::setDarkContent(bool dark)
 {
-    QWebEngineSettings *s = m_profile->settings();
-    if (s->testAttribute(QWebEngineSettings::ForceDarkMode) == dark)
+    if (m_darkContent == dark)
         return;
-    s->setAttribute(QWebEngineSettings::ForceDarkMode, dark);
-    if (!m_message.id.isEmpty())
+    m_darkContent = dark;
+    if (m_profile)
+        m_profile->settings()->setAttribute(QWebEngineSettings::ForceDarkMode, dark);
+    if (!m_message.id.isEmpty() && m_web)
         render();
 }
 
@@ -310,5 +354,5 @@ void MessageView::render()
                       + body.toUtf8();
     m_blocker->allowRemote = m_allowRemote;
     m_remoteBar->setVisible(hasRemote && !m_allowRemote);
-    m_web->setUrl(QUrl(QString("%1://msg/%2?n=%3").arg(Scheme, m_message.id).arg(++m_loadCounter)));
+    ensureEngine()->setUrl(QUrl(QString("%1://msg/%2?n=%3").arg(Scheme, m_message.id).arg(++m_loadCounter)));
 }

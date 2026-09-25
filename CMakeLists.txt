@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gdesk VERSION 2.3.0 LANGUAGES CXX)
+project(gdesk VERSION 2.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,13 @@ add_executable(gdesk
     src/sidebar.cpp src/sidebar.h
     data/gdesk.qrc)
 target_compile_definitions(gdesk PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
+
+# Optimisation à l'édition de liens (LTO) : binaire plus petit et plus rapide
+include(CheckIPOSupported)
+check_ipo_supported(RESULT GDESK_IPO OUTPUT GDESK_IPO_ERROR)
+if(GDESK_IPO AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    set_property(TARGET gdesk PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
 target_link_libraries(gdesk PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::DBus
                                     Qt6::WebEngineCore Qt6::WebEngineWidgets Qt6Keychain::Qt6Keychain)
 

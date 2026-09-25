@@ -41,6 +41,7 @@ public:
     void populateFolders(const QJsonObject &labels); // barre latérale à partir de labels.list
     void restoreStartFolder(); // boîte à ouvrir au démarrage, d'après les paramètres
     QMenu *folderMenu(const QString &folderId); // clic droit sur une boîte
+    void insertNewMessages(); // ajoute en haut de la liste les messages arrivés depuis le chargement
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -68,7 +69,7 @@ private:
 
     // Dossiers
     void loadLabels();
-    void refreshCounts();
+    void refreshCounts(const QStringList &only = {}); // toutes les boîtes, ou seulement celles-ci
     void scheduleCountsRefresh();
     void onFolderChanged();
 
@@ -76,6 +77,8 @@ private:
     void reloadList(const QString &keepSelected = {});
     void fetchPage(int generation, const QString &keepSelected);
     void fillRow(QTreeWidgetItem *item, const MailMessage &m);
+    QStringList currentListLabels() const;
+    void loadRowMetadata(const QString &id, int generation);
     void removeRows(const QList<QTreeWidgetItem *> &items);
     void onSelectionChanged();
 
@@ -87,6 +90,7 @@ private:
     void saveAttachment(int index);
     void openAttachment(int index);
     void rememberAddresses(const QString &addresses);
+    void setKnownAddresses(const QStringList &addresses);
 
     // Actions
     void applyLabels(const QStringList &add, const QStringList &remove, bool removesFromView, const QString &done);
@@ -152,7 +156,7 @@ private:
     AccountChip *m_accountChip;
     QMenu *m_accountMenu;
 
-    QAction *m_actNew, *m_actReply, *m_actReplyAll, *m_actForward;
+    QAction *m_actReply, *m_actReplyAll, *m_actForward;
     QAction *m_actArchive, *m_actDelete, *m_actRestore, *m_actSpam, *m_actRead, *m_actStar, *m_actRefresh;
 
     // Réglages (voir SettingsDialog)
@@ -185,6 +189,10 @@ private:
     QHash<QString, QTreeWidgetItem *> m_folderItems;
 
     QStringList m_knownAddresses;
+    QSet<QString> m_knownEmails;     // adresses déjà mémorisées (recherche immédiate)
+    QSet<QString> m_trustedSenders;  // expéditeurs dont les images sont affichées
+    QTimer *m_addressSaveTimer;
+    int m_pollsSinceCounts = 0;
     QSet<QString> m_knownUnread;
     bool m_unreadSeeded = false;
     int m_unread = -1;
