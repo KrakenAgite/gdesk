@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.krakenagite.gdesk</id>
+  <launchable type="desktop-id">gdesk.desktop</launchable>
+  <name>G-Desk</name>
+  <summary>Native mail client for Gmail</summary>
+  <summary xml:lang="fr">Client mail natif pour Gmail</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.krakenagite">
+    <name>Gabriel Arthus</name>
+  </developer>
+  <description>
+    <p>G-Desk is a native KDE mail client for Gmail, built on the official Gmail API.</p>
+    <p xml:lang="fr">G-Desk est un client mail natif pour KDE qui utilise l'API officielle de Gmail.</p>
+    <ul>
+      <li>Folders, categories and labels with unread counts</li>
+      <li xml:lang="fr">Dossiers, catégories et libellés avec compteurs de non-lus</li>
+      <li>Sandboxed HTML reading: no JavaScript, remote images blocked by default</li>
+      <li xml:lang="fr">Lecture HTML protégée : pas de JavaScript, images distantes bloquées par défaut</li>
+      <li>Compose, reply, forward, attachments, drafts and Gmail search</li>
+      <li xml:lang="fr">Rédaction, réponse, transfert, pièces jointes, brouillons et recherche Gmail</li>
+      <li>Plasma notifications, unread badge and KWallet integration</li>
+      <li xml:lang="fr">Notifications Plasma, pastille de non-lus et intégration à KWallet</li>
+    </ul>
+  </description>
+  <categories>
+    <category>Network</category>
+    <category>Email</category>
+  </categories>
+  <keywords>
+    <keyword>gmail</keyword>
+    <keyword>email</keyword>
+    <keyword xml:lang="fr">courriel</keyword>
+  </keywords>
+  <url type="homepage">https://krakenagite.github.io/gdesk/</url>
+  <url type="bugtracker">https://github.com/KrakenAgite/gdesk/issues</url>
+  <url type="vcs-browser">https://github.com/KrakenAgite/gdesk</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <provides>
+    <binary>gdesk</binary>
+    <mediatype>x-scheme-handler/mailto</mediatype>
+  </provides>
+  <releases>
+    <release version="2.0.1" date="2026-09-25">
+      <description>
+        <p>Packaging: all runtime dependencies are declared, PNG icons, AppStream metadata and manual page.</p>
+      </description>
+    </release>
+    <release version="2.0.0" date="2026-09-25">
+      <description>
+        <p>First public release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,34 @@
+.TH GDESK 1 "Septembre 2026" "G-Desk 2.0.1" "Commandes utilisateur"
+.SH NOM
+gdesk \- client mail natif pour Gmail
+.SH SYNOPSIS
+.B gdesk
+.RB [ \-\-minimized ]
+.RI [ mailto:adresse ]
+.SH DESCRIPTION
+.B gdesk
+est un client mail pour KDE qui utilise l'API officielle de Gmail.
+Au premier lancement, un assistant explique comment créer un client OAuth
+« Application de bureau » dans votre projet Google Cloud, puis la connexion
+se fait dans votre navigateur.
+.PP
+Une seule instance de G-Desk tourne à la fois : un second lancement
+réaffiche la fenêtre existante.
+.SH OPTIONS
+.TP
+.B \-\-minimized
+Démarre discrètement dans la barre système (utilisé au démarrage de session).
+.TP
+.I mailto:adresse
+Ouvre directement la fenêtre de rédaction vers cette adresse.
+.SH FICHIERS
+.TP
+.I ~/.config/gdesk/gdesk.conf
+Réglages et identifiants du client OAuth.
+.TP
+KWallet, entrée « gdesk »
+Jeton de connexion Google.
+.SH VOIR AUSSI
+https://krakenagite.github.io/gdesk/
+.SH AUTEUR
+Gabriel Arthus.

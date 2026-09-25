@@ -33,10 +33,10 @@ propre projet. Cliquez sur « Paramètres avancés » → « Accéder à G-Desk 
 ## Installer
 Téléchargez le `.deb` depuis la [page des versions](https://github.com/KrakenAgite/gdesk/releases/latest), puis :
 
-    sudo apt install ./gdesk_2.0.0_amd64.deb
+    sudo apt install ./gdesk_2.0.1_amd64.deb
 
 ## Compiler
-    sudo apt install build-essential cmake qt6-base-dev qt6-webengine-dev qtkeychain-qt6-dev dpkg-dev
+    sudo apt install build-essential cmake qt6-base-dev qt6-webengine-dev qtkeychain-qt6-dev qt6-svg-plugins dpkg-dev
     ./build-deb.sh          # produit build/gdesk_<version>_amd64.deb
 
 Tests (sans compte Google) :

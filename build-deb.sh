@@ -1,6 +1,6 @@
 #!/bin/sh
 # Compile G-Desk et construit build/gdesk_<version>_<arch>.deb
-# Prérequis : sudo apt install build-essential cmake qt6-base-dev qt6-webengine-dev qtkeychain-qt6-dev dpkg-dev
+# Prérequis : sudo apt install build-essential cmake qt6-base-dev qt6-webengine-dev qtkeychain-qt6-dev qt6-svg-plugins dpkg-dev
 set -e
 umask 022
 cd "$(dirname "$0")"
@@ -14,8 +14,17 @@ cmake -S . -B build -DGDESK_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_I
 cmake --build build -j"$(nproc)"
 DESTDIR="$PWD/$STAGE" cmake --install build
 strip --strip-unneeded "$STAGE/usr/bin/gdesk"
+gzip -9n "$STAGE/usr/share/man/man1/gdesk.1"
 
 mkdir -p "$STAGE/usr/share/doc/gdesk"
+cat > build/changelog.Debian <<CHANGELOG
+gdesk ($VERSION) stable; urgency=medium
+
+  * Voir https://github.com/KrakenAgite/gdesk/releases/tag/v$VERSION
+
+ -- Gabriel Arthus <120360026+KrakenAgite@users.noreply.github.com>  $(date -R)
+CHANGELOG
+gzip -9nc build/changelog.Debian > "$STAGE/usr/share/doc/gdesk/changelog.Debian.gz"
 printf 'G-Desk %s\nCopyright (c) 2026 Gabriel Arthus\nLicence : MIT (voir https://github.com/KrakenAgite/gdesk/blob/main/LICENSE)\n' "$VERSION" > "$STAGE/usr/share/doc/gdesk/copyright"
 
 # Dépendances calculées à partir des bibliothèques réellement utilisées
@@ -24,6 +33,10 @@ printf 'Source: gdesk\n\nPackage: gdesk\nArchitecture: any\n' > build/shlibs/deb
 DEPENDS=$(cd build/shlibs && dpkg-shlibdeps -O "../../$STAGE/usr/bin/gdesk" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
 [ -n "$DEPENDS" ] || DEPENDS="libqt6webenginewidgets6 (>= 6.8), libqt6webenginecore6 (>= 6.8), libqt6widgets6, libqt6gui6, libqt6network6, libqt6dbus6, libqt6core6t64"
 
+# Modules chargés dynamiquement par Qt, invisibles pour dpkg-shlibdeps :
+# affichage X11/Wayland et rendu de l'icône SVG
+RUNTIME_DEPENDS="qt6-qpa-plugins, qt6-wayland, qt6-svg-plugins, hicolor-icon-theme"
+
 mkdir -p "$STAGE/DEBIAN"
 cat > "$STAGE/DEBIAN/control" <<CTRL
 Package: gdesk
@@ -31,8 +44,8 @@ Version: $VERSION
 Section: mail
 Priority: optional
 Architecture: $ARCH
-Depends: $DEPENDS
-Recommends: breeze-icon-theme, kwalletmanager
+Depends: $DEPENDS, $RUNTIME_DEPENDS
+Recommends: kwallet6, xdg-utils, breeze-icon-theme
 Installed-Size: $(du -sk "$STAGE/usr" | cut -f1)
 Maintainer: Gabriel Arthus <120360026+KrakenAgite@users.noreply.github.com>
 Homepage: https://krakenagite.github.io/gdesk/
