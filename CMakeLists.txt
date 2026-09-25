@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gdesk VERSION 2.0.1 LANGUAGES CXX)
+project(gdesk VERSION 2.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +18,8 @@ add_executable(gdesk
     src/messageview.cpp src/messageview.h
     src/composer.cpp src/composer.h
     src/setupdialog.cpp src/setupdialog.h
+    src/settingsdialog.cpp src/settingsdialog.h
+    src/theme.cpp src/theme.h
     data/gdesk.qrc)
 target_compile_definitions(gdesk PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
 target_link_libraries(gdesk PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::DBus
@@ -49,7 +51,8 @@ option(GDESK_BUILD_TESTS "Compiler les tests" OFF)
 if(GDESK_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(gdesk-tests tests/tests.cpp
-        src/mime.cpp src/googleauth.cpp src/gmailapi.cpp src/messageview.cpp)
+        src/mime.cpp src/googleauth.cpp src/gmailapi.cpp src/messageview.cpp
+        src/settingsdialog.cpp src/theme.cpp)
     target_include_directories(gdesk-tests PRIVATE src)
     target_compile_definitions(gdesk-tests PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
     target_link_libraries(gdesk-tests PRIVATE Qt6::Test Qt6::Widgets Qt6::Network

@@ -221,6 +221,21 @@ MessageView::~MessageView()
     delete m_web; // la page doit disparaître avant son profil
 }
 
+void MessageView::setZoom(double factor)
+{
+    m_web->setZoomFactor(factor);
+}
+
+void MessageView::setDarkContent(bool dark)
+{
+    QWebEngineSettings *s = m_profile->settings();
+    if (s->testAttribute(QWebEngineSettings::ForceDarkMode) == dark)
+        return;
+    s->setAttribute(QWebEngineSettings::ForceDarkMode, dark);
+    if (!m_message.id.isEmpty())
+        render();
+}
+
 void MessageView::clear()
 {
     m_message = {};

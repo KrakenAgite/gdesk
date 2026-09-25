@@ -22,6 +22,8 @@
       <li xml:lang="fr">Rédaction, réponse, transfert, pièces jointes, brouillons et recherche Gmail</li>
       <li>Plasma notifications, unread badge and KWallet integration</li>
       <li xml:lang="fr">Notifications Plasma, pastille de non-lus et intégration à KWallet</li>
+      <li>Light or dark theme, adjustable density and layout, signature</li>
+      <li xml:lang="fr">Thème clair ou sombre, densité et disposition réglables, signature</li>
     </ul>
   </description>
   <categories>
@@ -46,6 +48,11 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.1.0" date="2026-09-25">
+      <description>
+        <p>New settings window: light/dark theme, list density, preview on the right or below, message text size, sender name, signature, check interval, read marking and privacy options.</p>
+      </description>
+    </release>
     <release version="2.0.1" date="2026-09-25">
       <description>
         <p>Packaging: all runtime dependencies are declared, PNG icons, AppStream metadata and manual page.</p>

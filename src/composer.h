@@ -31,10 +31,12 @@ class Composer : public QMainWindow
 public:
     enum Mode { New, Reply, ReplyAll, Forward };
 
-    Composer(GmailApi *api, const QString &myAddress, const QStringList &knownAddresses, QWidget *parent = nullptr);
+    // myAddress : « Nom <adresse> » ou adresse seule ; signature : texte brut, éventuellement vide
+    Composer(GmailApi *api, const QString &myAddress, const QString &signature, const QStringList &knownAddresses,
+             QWidget *parent = nullptr);
 
-    // Préremplit la fenêtre à partir du message d'origine (réponse, transfert)
-    void prepare(Mode mode, const MailMessage &original);
+    // Préremplit la fenêtre (signature, et pour une réponse ou un transfert, le message d'origine)
+    void prepare(Mode mode, const MailMessage &original = {});
     void prepareMailto(const QUrl &mailto);
 
 signals:
@@ -50,9 +52,10 @@ private:
     void addFiles();
     void addAttachment(const Attachment &a);
     void setBusy(bool busy, const QString &status = {});
+    QString signatureBlock() const;
 
     GmailApi *m_api;
-    QString m_myAddress, m_threadId, m_draftId;
+    QString m_myAddress, m_signature, m_threadId, m_draftId;
     QString m_inReplyTo, m_references;
     AddressEdit *m_to, *m_cc, *m_bcc;
     QLineEdit *m_subject;

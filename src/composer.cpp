@@ -68,8 +68,9 @@ void AddressEdit::keyPressEvent(QKeyEvent *e)
 }
 
 // --- Composer -----------------------------------------------------------------
-Composer::Composer(GmailApi *api, const QString &myAddress, const QStringList &knownAddresses, QWidget *parent)
-    : QMainWindow(parent), m_api(api), m_myAddress(myAddress)
+Composer::Composer(GmailApi *api, const QString &myAddress, const QString &signature,
+                   const QStringList &knownAddresses, QWidget *parent)
+    : QMainWindow(parent), m_api(api), m_myAddress(myAddress), m_signature(signature)
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle("Nouveau message");
@@ -137,8 +138,20 @@ Composer::Composer(GmailApi *api, const QString &myAddress, const QStringList &k
     m_to->setFocus();
 }
 
+QString Composer::signatureBlock() const
+{
+    // « -- » suivi d'un espace : séparateur standard reconnu par les logiciels de messagerie
+    return m_signature.isEmpty() ? QString() : "\n\n-- \n" + m_signature;
+}
+
 void Composer::prepare(Mode mode, const MailMessage &o)
 {
+    if (mode == New) {
+        m_body->setPlainText(signatureBlock());
+        m_body->moveCursor(QTextCursor::Start);
+        m_to->setFocus();
+        return;
+    }
     m_threadId = mode == Forward ? QString() : o.threadId;
     const QString original = o.text.isEmpty() ? Mime::htmlToText(o.html) : o.text;
     const QString when = QLocale().toString(o.date.toLocalTime(), QLocale::LongFormat);
@@ -168,14 +181,14 @@ void Composer::prepare(Mode mode, const MailMessage &o)
         QString quoted;
         for (const QString &line : original.split('\n'))
             quoted += "> " + line + "\n";
-        m_body->setPlainText(QString("\n\nLe %1, %2 a écrit :\n%3").arg(when, o.from, quoted));
+        m_body->setPlainText(signatureBlock() + QString("\n\nLe %1, %2 a écrit :\n%3").arg(when, o.from, quoted));
         m_body->moveCursor(QTextCursor::Start);
         m_body->setFocus();
     } else if (mode == Forward) {
         const bool alreadyFwd = o.subject.startsWith("Fwd:", Qt::CaseInsensitive)
                                 || o.subject.startsWith("TR:", Qt::CaseInsensitive);
         m_subject->setText(alreadyFwd ? o.subject : "Fwd: " + o.subject);
-        m_body->setPlainText(QString("\n\n---------- Message transféré ---------\nDe : %1\nDate : %2\n"
+        m_body->setPlainText(signatureBlock() + QString("\n\n---------- Message transféré ---------\nDe : %1\nDate : %2\n"
                                      "Objet : %3\nÀ : %4\n%5\n%6")
                                  .arg(o.from, when, o.subject, o.to,
                                       o.cc.isEmpty() ? QString() : "Cc : " + o.cc + "\n", original));
@@ -189,6 +202,7 @@ void Composer::prepare(Mode mode, const MailMessage &o)
 
 void Composer::prepareMailto(const QUrl &mailto)
 {
+    prepare(New);
     m_to->setText(QUrl::fromPercentEncoding(mailto.path(QUrl::FullyEncoded).toUtf8()));
     const QUrlQuery q(mailto);
     for (const auto &[key, value] : q.queryItems(QUrl::FullyDecoded)) {
@@ -196,7 +210,7 @@ void Composer::prepareMailto(const QUrl &mailto)
         if (k == "subject")
             m_subject->setText(value);
         else if (k == "body")
-            m_body->setPlainText(value);
+            m_body->setPlainText(value + signatureBlock());
         else if (k == "cc")
             m_cc->setText(value);
         else if (k == "bcc")

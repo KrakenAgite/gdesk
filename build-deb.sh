@@ -45,7 +45,7 @@ Section: mail
 Priority: optional
 Architecture: $ARCH
 Depends: $DEPENDS, $RUNTIME_DEPENDS
-Recommends: kwallet6, xdg-utils, breeze-icon-theme
+Recommends: kwallet6, xdg-utils, qt6-translations-l10n, breeze-icon-theme
 Installed-Size: $(du -sk "$STAGE/usr" | cut -f1)
 Maintainer: Gabriel Arthus <120360026+KrakenAgite@users.noreply.github.com>
 Homepage: https://krakenagite.github.io/gdesk/

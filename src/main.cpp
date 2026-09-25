@@ -1,8 +1,12 @@
 // G-Desk : client mail Gmail natif pour KDE, basé sur l'API officielle de Google.
 #include "mainwindow.h"
 #include "messageview.h"
+#include "theme.h"
 
 #include <QApplication>
+#include <QLibraryInfo>
+#include <QLocale>
+#include <QTranslator>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <unistd.h>
@@ -16,6 +20,12 @@ int main(int argc, char *argv[])
     QApplication::setApplicationVersion(GDESK_VERSION);
     QApplication::setDesktopFileName("gdesk");
     QApplication::setQuitOnLastWindowClosed(false);
+    Theme::init(); // mémorise l'apparence KDE avant toute personnalisation
+
+    // Traductions de Qt (boutons Oui/Non, Annuler, sélecteur de fichiers…) dans la langue du système
+    QTranslator qtTranslator;
+    if (qtTranslator.load(QLocale::system(), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
+        app.installTranslator(&qtTranslator);
 
     const QStringList args = app.arguments().mid(1);
     QString mailto;

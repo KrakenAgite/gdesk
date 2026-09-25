@@ -2,16 +2,26 @@
 #include "googleauth.h"
 #include "messageview.h"
 #include "mime.h"
+#include "settingsdialog.h"
+#include "theme.h"
 
 #include <QBuffer>
 #include <QDesktopServices>
 #include <QImage>
 #include <QJsonArray>
+#include <QListWidget>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QSignalSpy>
 #include <QStringEncoder>
 #include <QApplication>
+#include <QLibraryInfo>
+#include <QLocale>
+#include <QTranslator>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QTest>
 #include <QUrlQuery>
 #include <QWebEnginePage>
@@ -226,12 +236,63 @@ private slots:
         QVERIFY(allowed.contains("\"remote\":92"));
         QVERIFY(view.findChild<QWidget *>("remoteBar")->isHidden());
     }
+    void settingsDialog()
+    {
+        QTemporaryDir dir;
+        QSettings settings(dir.filePath("gdesk.conf"), QSettings::IniFormat);
+        settings.setValue("trusted_senders", QStringList{"news@exemple.fr"});
+        settings.setValue("known_addresses", QStringList{"a@b.fr", "c@d.fr"});
+        const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
+
+        for (const QString &theme : {QString("light"), QString("dark")}) {
+            Theme::apply(theme);
+            SettingsDialog dlg(settings, "marie.dupont@gmail.com");
+            dlg.resize(840, 900);
+            dlg.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&dlg));
+            auto *nav = dlg.findChildren<QListWidget *>().value(0);
+            QVERIFY(nav && nav->count() == 4);
+            for (int i = 0; i < nav->count(); ++i) {
+                nav->setCurrentRow(i);
+                QTest::qWait(50);
+                if (!out.isEmpty())
+                    dlg.grab().save(QString("%1/settings-%2-%3.png").arg(out, theme).arg(i));
+            }
+            // Choix : thème sombre, lignes espacées, aperçu à droite
+            for (PreviewCard *card : dlg.findChildren<PreviewCard *>())
+                if (card->value() == "dark" || card->value() == "spacious" || card->value() == "right")
+                    card->click();
+            QSignalSpy applied(&dlg, &SettingsDialog::applied);
+            QMetaObject::invokeMethod(&dlg, "accept"); // Annuler ne doit rien enregistrer…
+            QCOMPARE(applied.count(), 0);
+        }
+        QCOMPARE(settings.value("theme", "system").toString(), QString("system"));
+
+        SettingsDialog dlg(settings, "marie.dupont@gmail.com");
+        for (PreviewCard *card : dlg.findChildren<PreviewCard *>())
+            if (card->value() == "dark" || card->value() == "spacious" || card->value() == "right")
+                card->click();
+        QSignalSpy applied(&dlg, &SettingsDialog::applied);
+        auto *apply = dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
+        apply->click(); // … « Appliquer » si
+        QCOMPARE(applied.count(), 1);
+        QCOMPARE(settings.value("theme").toString(), QString("dark"));
+        QCOMPARE(settings.value("density").toString(), QString("spacious"));
+        QCOMPARE(settings.value("layout").toString(), QString("right"));
+        QCOMPARE(settings.value("trusted_senders").toStringList(), QStringList{"news@exemple.fr"});
+        Theme::apply("system");
+    }
 };
 
 int main(int argc, char *argv[])
 {
     MessageView::registerScheme();
     QApplication app(argc, argv);
+
+    // Traductions de Qt (boutons Oui/Non, Annuler, sélecteur de fichiers…) dans la langue du système
+    QTranslator qtTranslator;
+    if (qtTranslator.load(QLocale::system(), "qtbase", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
+        app.installTranslator(&qtTranslator);
     Tests t;
     return QTest::qExec(&t, argc, argv);
 }

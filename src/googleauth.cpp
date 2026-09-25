@@ -127,7 +127,7 @@ void GoogleAuth::login()
     q.addQueryItem("code_challenge_method", "S256");
     q.addQueryItem("state", m_state);
     q.addQueryItem("access_type", "offline");
-    q.addQueryItem("prompt", "consent");
+    q.addQueryItem("prompt", "select_account consent"); // choix du compte + jeton de rafraîchissement
     url.setQuery(q);
     QDesktopServices::openUrl(url);
 }

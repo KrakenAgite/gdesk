@@ -27,6 +27,8 @@ public:
     void showMessage(const MailMessage &message, bool allowRemote);
     void clear();
     const MailMessage &message() const { return m_message; }
+    void setZoom(double factor);
+    void setDarkContent(bool dark); // convertit les e-mails en couleurs sombres
 
 signals:
     void saveAttachmentRequested(int index);

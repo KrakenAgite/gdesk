@@ -13,6 +13,9 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
 - Recherche avec la syntaxe Gmail (`from:`, `has:attachment`, `after:2026/01/01`…)
 - Relève toutes les minutes, notifications KDE, pastille de non-lus, liens `mailto:`
 - Connexion OAuth 2.0 (PKCE) dans le navigateur ; jeton rangé dans KWallet
+- Paramètres (Ctrl+,) : thème clair / sombre / KDE, taille des lignes (compacte, aérée, espacée),
+  aperçu en dessous ou à droite, taille du texte, nom affiché, signature, fréquence de relève,
+  marquage comme lu, gestion des images distantes et des adresses mémorisées
 
 ## Première utilisation : identifiants Google Cloud
 
@@ -47,7 +50,7 @@ Tests (sans compte Google) :
 ## Raccourcis
 Ctrl+N nouveau · Ctrl+R répondre · Ctrl+Maj+R répondre à tous · Ctrl+L transférer ·
 A archiver · Suppr supprimer · S suivi · M lu/non lu · J spam · Ctrl+F rechercher · F5 actualiser ·
-Ctrl+Entrée envoyer (fenêtre de rédaction)
+Ctrl+, paramètres · Ctrl+Entrée envoyer (fenêtre de rédaction)
 
 ## Site web
 Le site (dossier `docs/`) est publié par GitHub Pages. Il est statique, sans cookie ni ressource externe.

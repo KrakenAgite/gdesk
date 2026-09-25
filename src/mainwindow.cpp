@@ -2,7 +2,9 @@
 #include "gmailapi.h"
 #include "googleauth.h"
 #include "messageview.h"
+#include "settingsdialog.h"
 #include "setupdialog.h"
+#include "theme.h"
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -27,6 +29,7 @@
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -35,7 +38,7 @@
 #include <memory>
 
 namespace {
-enum Roles { IdRole = Qt::UserRole, LabelsRole, NameRole };
+enum Roles { IdRole = Qt::UserRole, LabelsRole, NameRole, SubjectRole, SnippetRole };
 enum Columns { ColStar, ColWho, ColSubject, ColDate };
 
 struct SystemLabel {
@@ -59,6 +62,21 @@ const SystemLabel categories[] = {
     {"CATEGORY_FORUMS", "Forums", "im-user"},
 };
 } // namespace
+
+// Hauteur des lignes de la liste selon la densité choisie
+class RowDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    int extraHeight = 8;
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QSize s = QStyledItemDelegate::sizeHint(option, index);
+        s.rheight() += extraHeight;
+        return s;
+    }
+};
 
 MainWindow::MainWindow()
     : m_settings("gdesk", "gdesk"),
@@ -89,6 +107,7 @@ MainWindow::MainWindow()
     m_countsTimer->setSingleShot(true);
     m_countsTimer->setInterval(800);
     connect(m_countsTimer, &QTimer::timeout, this, &MainWindow::refreshCounts);
+    applySettings();
 
     connect(m_auth, &GoogleAuth::loggedIn, this, &MainWindow::onLoggedIn);
     connect(m_auth, &GoogleAuth::loginFailed, this, [this](const QString &err) {
@@ -146,14 +165,10 @@ void MainWindow::buildActions()
         reloadList(m_openId);
     });
 
-    m_actCloseToTray = new QAction("Garder dans la barre système à la fermeture", this);
-    m_actCloseToTray->setCheckable(true);
-    m_actCloseToTray->setChecked(m_settings.value("close_to_tray", true).toBool());
-    connect(m_actCloseToTray, &QAction::toggled, this, [this](bool v) { m_settings.setValue("close_to_tray", v); });
-    m_actNotifications = new QAction("Notifications des nouveaux messages", this);
-    m_actNotifications->setCheckable(true);
-    m_actNotifications->setChecked(m_settings.value("notifications", true).toBool());
-    connect(m_actNotifications, &QAction::toggled, this, [this](bool v) { m_settings.setValue("notifications", v); });
+    auto *settings = new QAction(QIcon::fromTheme("configure"), "Paramètres…", this);
+    settings->setShortcut(QKeySequence("Ctrl+,"));
+    connect(settings, &QAction::triggered, this, &MainWindow::openSettings);
+    addAction(settings);
 
     auto *quit = new QAction(this);
     quit->setShortcut(QKeySequence::Quit);
@@ -201,6 +216,10 @@ QWidget *MainWindow::buildLoginPage()
     buttons->addWidget(m_loginButton);
     buttons->addWidget(m_cancelButton);
     buttons->addWidget(m_setupButton);
+    auto *prefs = new QPushButton(QIcon::fromTheme("preferences-desktop-theme"), "Paramètres d'affichage…");
+    prefs->setFlat(true);
+    connect(prefs, &QPushButton::clicked, this, &MainWindow::openSettings);
+    buttons->addWidget(prefs);
     v->addLayout(buttons);
     v->addStretch(3);
     return page;
@@ -285,6 +304,8 @@ QWidget *MainWindow::buildMailPage()
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->setAllColumnsShowFocus(true);
     m_list->setTextElideMode(Qt::ElideRight);
+    m_rowDelegate = new RowDelegate(m_list);
+    m_list->setItemDelegate(m_rowDelegate);
     QHeaderView *hdr = m_list->header();
     hdr->setStretchLastSection(false);
     hdr->setSectionResizeMode(ColStar, QHeaderView::Fixed);
@@ -324,22 +345,20 @@ QWidget *MainWindow::buildMailPage()
         m_view->showMessage(m, true);
     });
 
-    auto *right = new QSplitter(Qt::Vertical);
-    right->addWidget(m_list);
-    right->addWidget(m_view);
-    right->setStretchFactor(0, 2);
-    right->setStretchFactor(1, 3);
-    right->setObjectName("rightSplitter");
+    m_rightSplitter = new QSplitter(Qt::Vertical);
+    m_rightSplitter->addWidget(m_list);
+    m_rightSplitter->addWidget(m_view);
+    m_rightSplitter->setStretchFactor(0, 2);
+    m_rightSplitter->setStretchFactor(1, 3);
+    m_rightSplitter->setChildrenCollapsible(false);
 
     m_splitter = new QSplitter(Qt::Horizontal);
     m_splitter->addWidget(m_folders);
-    m_splitter->addWidget(right);
+    m_splitter->addWidget(m_rightSplitter);
     m_splitter->setStretchFactor(1, 1);
     m_splitter->setSizes({220, 1080});
     if (m_settings.contains("splitter"))
         m_splitter->restoreState(m_settings.value("splitter").toByteArray());
-    if (m_settings.contains("splitter_right"))
-        right->restoreState(m_settings.value("splitter_right").toByteArray());
     v->addWidget(m_splitter, 1);
 
     statusBar()->setSizeGripEnabled(false);
@@ -350,16 +369,12 @@ QWidget *MainWindow::buildMailPage()
 QMenu *MainWindow::buildAccountMenu()
 {
     auto *menu = new QMenu(this);
-    menu->addAction(m_actCloseToTray);
-    menu->addAction(m_actNotifications);
-    auto *autostart = menu->addAction("Lancer à l'ouverture de session");
-    autostart->setCheckable(true);
-    autostart->setChecked(QFile::exists(autostartPath()));
-    connect(autostart, &QAction::toggled, this, &MainWindow::setAutostart);
-    menu->addSeparator();
+    auto *settings = menu->addAction(QIcon::fromTheme("configure"), "Paramètres…", this, &MainWindow::openSettings);
+    settings->setShortcut(QKeySequence("Ctrl+,"));
     menu->addAction(QIcon::fromTheme("internet-web-browser"), "Ouvrir Gmail dans le navigateur", this,
                     [] { QDesktopServices::openUrl(QUrl("https://mail.google.com/")); });
-    menu->addAction(QIcon::fromTheme("configure"), "Identifiants Google Cloud…", this, &MainWindow::configureClient);
+    menu->addSeparator();
+    menu->addAction(QIcon::fromTheme("system-switch-user"), "Changer de compte…", this, &MainWindow::switchAccount);
     menu->addAction(QIcon::fromTheme("system-log-out"), "Se déconnecter", this, &MainWindow::logout);
     menu->addSeparator();
     menu->addAction(QIcon::fromTheme("help-about"), "À propos", this, &MainWindow::about);
@@ -377,6 +392,10 @@ void MainWindow::setupTray()
     menu->addAction("Afficher", this, &MainWindow::bringToFront);
     menu->addAction(QIcon::fromTheme("mail-message-new"), "Nouveau message", this, [this] { compose(Composer::New); });
     menu->addAction(QIcon::fromTheme("view-refresh"), "Relever le courrier", this, &MainWindow::checkNewMail);
+    menu->addAction(QIcon::fromTheme("configure"), "Paramètres…", this, [this] {
+        bringToFront();
+        openSettings();
+    });
     menu->addSeparator();
     menu->addAction(QIcon::fromTheme("application-exit"), "Quitter", this, &MainWindow::quitApp);
     m_tray->setContextMenu(menu);
@@ -414,6 +433,82 @@ void MainWindow::updateActions()
     m_actSpam->setIcon(QIcon::fromTheme(inSpam ? "mail-mark-notjunk" : "mail-mark-junk"));
     m_actRead->setEnabled(selected > 0);
     m_actStar->setEnabled(selected > 0);
+}
+
+// =============================================================================
+//  Paramètres
+// =============================================================================
+void MainWindow::openSettings()
+{
+    auto *dlg = new SettingsDialog(m_settings, m_email, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &SettingsDialog::applied, this, &MainWindow::applySettings);
+    connect(dlg, &SettingsDialog::logoutRequested, this, [this, dlg] {
+        dlg->close();
+        logout();
+    });
+    connect(dlg, &SettingsDialog::switchAccountRequested, this, [this, dlg] {
+        dlg->close();
+        switchAccount();
+    });
+    connect(dlg, &SettingsDialog::configureClientRequested, this, &MainWindow::configureClient);
+    connect(dlg, &SettingsDialog::testNotificationRequested, this, [this] {
+        notify("G-Desk", "Les notifications fonctionnent. Vous serez prévenu à chaque nouveau message.");
+    });
+    dlg->open();
+}
+
+void MainWindow::saveSplitters()
+{
+    m_settings.setValue("splitter", m_splitter->saveState());
+    m_settings.setValue("splitter_" + m_layout, m_rightSplitter->saveState());
+}
+
+void MainWindow::applySettings()
+{
+    // Thème
+    Theme::apply(m_settings.value("theme", "system").toString());
+    m_view->setDarkContent(Theme::isDark() && m_settings.value("dark_messages", false).toBool());
+    m_view->setZoom(m_settings.value("message_zoom", 100).toInt() / 100.0);
+
+    // Densité de la liste
+    const QString density = m_settings.value("density", "comfortable").toString();
+    m_rowDelegate->extraHeight = density == "compact" ? 0 : density == "spacious" ? 16 : 8;
+    m_list->setUniformRowHeights(false);
+    m_list->setUniformRowHeights(true);
+    m_list->doItemsLayout();
+    m_showSnippet = m_settings.value("show_snippet", true).toBool();
+    for (QTreeWidgetItem *item : std::as_const(m_rows))
+        updateRowText(item);
+
+    // Disposition : aperçu en dessous ou à droite
+    const QString layout = m_settings.value("layout", "below").toString();
+    if (layout != m_layout || m_rightSplitter->property("initialized").isNull()) {
+        if (!m_rightSplitter->property("initialized").isNull())
+            m_settings.setValue("splitter_" + m_layout, m_rightSplitter->saveState());
+        m_layout = layout;
+        m_rightSplitter->setOrientation(layout == "right" ? Qt::Horizontal : Qt::Vertical);
+        const QByteArray state = m_settings.value("splitter_" + layout).toByteArray();
+        if (state.isEmpty() || !m_rightSplitter->restoreState(state)) {
+            const int total = layout == "right" ? m_rightSplitter->width() : m_rightSplitter->height();
+            if (total > 0) // sinon (fenêtre pas encore affichée) : répartition par défaut 2/5 – 3/5
+                m_rightSplitter->setSizes({total * 2 / 5, total * 3 / 5});
+        }
+        m_rightSplitter->setProperty("initialized", true);
+        m_list->header()->resizeSection(ColWho, layout == "right" ? 140 : 180);
+    }
+
+    // Général et confidentialité
+    m_closeToTray = m_settings.value("close_to_tray", true).toBool();
+    m_notificationsOn = m_settings.value("notifications", true).toBool();
+    m_pollTimer->setInterval(m_settings.value("poll_minutes", 1).toInt() * 60 * 1000);
+    m_markReadMode = m_settings.value("mark_read", "immediate").toString();
+    m_remoteMode = m_settings.value("remote_images", "ask").toString();
+    m_knownAddresses = m_settings.value("known_addresses").toStringList();
+
+    // Réaffiche le message ouvert avec les nouveaux réglages d'images
+    if (!m_view->message().id.isEmpty())
+        displayMessage(m_view->message());
 }
 
 // =============================================================================
@@ -486,15 +581,36 @@ void MainWindow::logout()
                               "Se déconnecter de " + m_email + " ?\nG-Desk n'aura plus accès à vos messages.")
         != QMessageBox::Yes)
         return;
-    m_pollTimer->stop();
     m_auth->logout();
+    clearMailbox();
+    showLoginPage("Vous êtes déconnecté.");
+}
+
+void MainWindow::clearMailbox()
+{
+    m_pollTimer->stop();
     m_email.clear();
+    ++m_generation;
     m_list->clear();
     m_rows.clear();
     m_folders->clear();
     m_folderItems.clear();
+    m_openId.clear();
     m_view->clear();
-    showLoginPage("Vous êtes déconnecté.");
+    m_knownUnread.clear();
+    m_unreadSeeded = false;
+    setUnread(0);
+}
+
+void MainWindow::switchAccount()
+{
+    if (QMessageBox::question(this, "Changer de compte",
+                              "Se déconnecter de " + m_email + " et se connecter avec un autre compte Google ?")
+        != QMessageBox::Yes)
+        return;
+    m_auth->logout();
+    clearMailbox();
+    startLogin();
 }
 
 // =============================================================================
@@ -680,12 +796,23 @@ void MainWindow::fillRow(QTreeWidgetItem *item, const MailMessage &m)
     item->setText(ColWho, names.isEmpty() ? QString("(inconnu)") : names.join(", "));
     item->setToolTip(ColWho, outgoing ? m.to : m.from);
     const QString subject = m.subject.isEmpty() ? QString("(sans objet)") : m.subject;
-    item->setText(ColSubject, m.snippet.isEmpty() ? subject : subject + "  —  " + m.snippet);
+    item->setData(0, SubjectRole, subject);
+    item->setData(0, SnippetRole, m.snippet);
+    updateRowText(item);
     item->setToolTip(ColSubject, "<b>" + subject.toHtmlEscaped() + "</b><br>" + m.snippet.toHtmlEscaped());
     item->setText(ColDate, Mime::shortDate(m.date));
     item->setToolTip(ColDate, QLocale().toString(m.date.toLocalTime(), QLocale::LongFormat));
     updateRowStyle(item);
     rememberAddresses(m.from);
+}
+
+void MainWindow::updateRowText(QTreeWidgetItem *item)
+{
+    const QString subject = item->data(0, SubjectRole).toString();
+    const QString snippet = item->data(0, SnippetRole).toString();
+    if (subject.isEmpty())
+        return; // ligne encore en chargement
+    item->setText(ColSubject, (m_showSnippet && !snippet.isEmpty()) ? subject + "  —  " + snippet : subject);
 }
 
 void MainWindow::updateRowStyle(QTreeWidgetItem *item)
@@ -751,14 +878,14 @@ void MainWindow::openMessage(const QString &id)
             fillRow(item, m);
 
         if (m.isUnread()) {
-            m_api->modifyMessages({id}, {}, {"UNREAD"}, [this](const QJsonObject &, const QString &e) {
-                if (e.isEmpty())
-                    scheduleCountsRefresh();
-            });
-            m.labelIds.removeAll("UNREAD");
-            if (QTreeWidgetItem *item = m_rows.value(id)) {
-                item->setData(0, LabelsRole, m.labelIds);
-                updateRowStyle(item);
+            if (m_markReadMode == "immediate") {
+                markRead(id);
+                m.labelIds.removeAll("UNREAD");
+            } else if (m_markReadMode == "delay") {
+                QTimer::singleShot(3000, this, [this, id] {
+                    if (id == m_openId)
+                        markRead(id);
+                });
             }
         }
 
@@ -787,10 +914,24 @@ void MainWindow::openMessage(const QString &id)
     });
 }
 
+void MainWindow::markRead(const QString &id)
+{
+    m_api->modifyMessages({id}, {}, {"UNREAD"}, [this](const QJsonObject &, const QString &e) {
+        if (e.isEmpty())
+            scheduleCountsRefresh();
+    });
+    if (QTreeWidgetItem *item = m_rows.value(id)) {
+        QStringList labels = item->data(0, LabelsRole).toStringList();
+        labels.removeAll("UNREAD");
+        item->setData(0, LabelsRole, labels);
+        updateRowStyle(item);
+    }
+}
+
 void MainWindow::displayMessage(const MailMessage &m)
 {
     const QStringList trusted = m_settings.value("trusted_senders").toStringList();
-    m_view->showMessage(m, trusted.contains(Mime::emailOnly(m.from).toLower()));
+    m_view->showMessage(m, m_remoteMode == "always" || trusted.contains(Mime::emailOnly(m.from).toLower()));
     rememberAddresses(m.from + "," + m.to + "," + m.cc);
     updateActions();
 }
@@ -989,7 +1130,9 @@ void MainWindow::toggleStar()
 
 Composer *MainWindow::newComposer()
 {
-    auto *c = new Composer(m_api, m_email, m_knownAddresses, this);
+    const QString name = m_settings.value("sender_name").toString().trimmed();
+    const QString from = name.isEmpty() ? m_email : QString("%1 <%2>").arg(name, m_email);
+    auto *c = new Composer(m_api, from, m_settings.value("signature").toString(), m_knownAddresses, this);
     connect(c, &Composer::sent, this, [this] {
         statusBar()->showMessage("Message envoyé.", 5000);
         if (m_currentLabel == "SENT" || m_currentLabel == "DRAFT")
@@ -1004,7 +1147,9 @@ void MainWindow::compose(Composer::Mode mode)
     if (m_email.isEmpty())
         return;
     if (mode == Composer::New) {
-        newComposer()->show();
+        Composer *c = newComposer();
+        c->prepare(Composer::New);
+        c->show();
         return;
     }
     const MailMessage m = m_view->message();
@@ -1081,7 +1226,7 @@ void MainWindow::checkNewMail()
 
         if (m_currentLabel == "INBOX" && m_query.isEmpty() && m_list->verticalScrollBar()->value() < 20)
             reloadList(m_openId);
-        if (!m_actNotifications->isChecked())
+        if (!m_notificationsOn)
             return;
         if (fresh.size() > 3) {
             notify(QString("%1 nouveaux messages").arg(fresh.size()), m_email);
@@ -1158,25 +1303,6 @@ void MainWindow::bringToFront()
     activateWindow();
 }
 
-QString MainWindow::autostartPath()
-{
-    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/autostart/gdesk.desktop";
-}
-
-void MainWindow::setAutostart(bool enabled)
-{
-    const QString path = autostartPath();
-    if (!enabled) {
-        QFile::remove(path);
-        return;
-    }
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QFile f(path);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        f.write("[Desktop Entry]\nType=Application\nName=G-Desk\nExec=gdesk --minimized\nIcon=gdesk\n"
-                "X-GNOME-Autostart-enabled=true\n");
-}
-
 void MainWindow::about()
 {
     QMessageBox::about(this, "À propos de G-Desk",
@@ -1200,10 +1326,8 @@ void MainWindow::showError(const QString &what, const QString &err)
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     m_settings.setValue("geometry", saveGeometry());
-    m_settings.setValue("splitter", m_splitter->saveState());
-    if (auto *right = m_splitter->findChild<QSplitter *>("rightSplitter"))
-        m_settings.setValue("splitter_right", right->saveState());
-    if (!m_quitting && m_tray && m_actCloseToTray->isChecked()) {
+    saveSplitters();
+    if (!m_quitting && m_tray && m_closeToTray) {
         event->ignore();
         hide();
         return;
