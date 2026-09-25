@@ -25,6 +25,7 @@
 #include <QNetworkAccessManager>
 #include <QPainter>
 #include <QPushButton>
+#include <QRhiWidget>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -55,6 +56,15 @@ MainWindow::MainWindow()
     resize(1300, 820);
     if (m_settings.contains("geometry"))
         restoreGeometry(m_settings.value("geometry").toByteArray());
+
+    // Le moteur web dessine via la carte graphique (RHI). L'ajouter à une fenêtre déjà affichée
+    // oblige Qt à détruire puis recréer la fenêtre : elle clignotait à l'ouverture du premier
+    // message. Ce minuscule composant RHI caché prépare la fenêtre dès sa création (≈ 5 Mo,
+    // contre ≈ 90 Mo pour un moteur web démarré en permanence).
+    auto *rhiSurface = new QRhiWidget(this);
+    rhiSurface->setObjectName("rhiSurface");
+    rhiSurface->setFixedSize(1, 1);
+    rhiSurface->hide();
 
     buildActions();
     m_pages = new QStackedWidget;

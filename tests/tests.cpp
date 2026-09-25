@@ -47,7 +47,9 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStyleOptionViewItem>
+#include <QPlatformSurfaceEvent>
 #include <QTest>
+#include <QWindow>
 #include <QTextDocumentFragment>
 #include <QUrlQuery>
 #include <QWebEnginePage>
@@ -1235,6 +1237,49 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
 
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});
+    }
+    // Régression : au premier message ouvert, la fenêtre principale clignotait. Ajouter le moteur
+    // web (rendu RHI) à une fenêtre déjà affichée obligeait Qt à la détruire puis la recréer.
+    // (Ne se reproduit que sur un vrai écran : lancer ce test sans QT_QPA_PLATFORM=offscreen.)
+    void noWindowRecreationOnFirstMessage()
+    {
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        MainWindow win;
+        QVERIFY(win.findChild<QWidget *>("rhiSurface"));
+        win.resize(1000, 700);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+
+        struct SurfaceWatch : QObject {
+            int destroyed = 0;
+            bool eventFilter(QObject *, QEvent *e) override
+            {
+                if (e->type() == QEvent::PlatformSurface
+                    && static_cast<QPlatformSurfaceEvent *>(e)->surfaceEventType()
+                           == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed)
+                    ++destroyed;
+                return false;
+            }
+        } watch;
+        win.windowHandle()->installEventFilter(&watch);
+
+        auto *view = win.findChild<MessageView *>();
+        QVERIFY(view && !view->hasEngine());
+        MailMessage m;
+        m.id = "a";
+        m.text = "Bonjour";
+        view->showMessage(m, false);
+        QSignalSpy loaded(view->findChild<QWebEngineView *>(), &QWebEngineView::loadFinished);
+        QVERIFY(loaded.wait(15000));
+        // Libération puis recréation (retour depuis la barre système) : toujours sans clignotement
+        view->releaseEngine();
+        view->showMessage(m, false);
+        QTest::qWait(300);
+        QCOMPARE(watch.destroyed, 0);
+        QVERIFY(!view->findChild<QWebEngineView *>()->isWindow());
+        win.windowHandle()->removeEventFilter(&watch);
     }
 };
 
