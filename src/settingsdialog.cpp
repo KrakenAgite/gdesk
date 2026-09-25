@@ -1,4 +1,5 @@
 #include "settingsdialog.h"
+#include "sidebar.h"
 #include "theme.h"
 
 #include <QButtonGroup>
@@ -24,6 +25,8 @@
 #include <QSlider>
 #include <QStackedWidget>
 #include <QStandardPaths>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 // =============================================================================
@@ -204,8 +207,9 @@ void PreviewCard::paintEvent(QPaintEvent *)
 // =============================================================================
 //  Fenêtre des paramètres
 // =============================================================================
-SettingsDialog::SettingsDialog(QSettings &settings, const QString &email, QWidget *parent)
-    : QDialog(parent), m_settings(settings)
+SettingsDialog::SettingsDialog(QSettings &settings, const QString &email, const QList<LabelChoice> &labels,
+                               QWidget *parent)
+    : QDialog(parent), m_settings(settings), m_labels(labels)
 {
     setWindowTitle("Paramètres — G-Desk");
     resize(820, 620);
@@ -402,6 +406,23 @@ QWidget *SettingsDialog::generalPage()
     sv->addWidget(m_closeToTray);
     sv->addWidget(m_autostart);
     sv->addLayout(minRow);
+    auto *startForm = new QFormLayout;
+    m_startFolder = new QComboBox;
+    m_startFolder->setIconSize(QSize(16, 16));
+    m_startFolder->addItem(QIcon::fromTheme("document-open-recent"), "Dernière boîte consultée", "__last__");
+    m_startFolder->insertSeparator(1);
+    const QColor iconText = palette().color(QPalette::Text);
+    auto tinted = [&](const char *icon, const QColor &color) {
+        return QIcon(tintedIcon(folderIcon(icon), 16, color.isValid() ? color : iconText, devicePixelRatioF()));
+    };
+    for (const SectionDef &section : sidebarSections())
+        for (const FolderDef &f : section.folders)
+            m_startFolder->addItem(tinted(f.icon, QColor(f.color)), f.name, QString(f.id));
+    for (const LabelChoice &l : std::as_const(m_labels))
+        m_startFolder->addItem(tinted("label", l.color), l.name, l.id);
+    m_startFolder->setMaxVisibleItems(20);
+    startForm->addRow("Boîte ouverte au démarrage :", m_startFolder);
+    sv->addLayout(startForm);
     v->addWidget(startBox);
 
     auto *mailBox = new QGroupBox("Nouveaux messages");
@@ -417,6 +438,47 @@ QWidget *SettingsDialog::generalPage()
     notifRow->addWidget(m_notifications, 1);
     notifRow->addWidget(test);
     form->addRow(notifRow);
+
+    // Boîtes surveillées : la boîte de réception regroupe ses catégories
+    m_notifyTree = new QTreeWidget;
+    m_notifyTree->setHeaderHidden(true);
+    m_notifyTree->setIconSize(QSize(16, 16));
+    m_notifyTree->setRootIsDecorated(true);
+    m_notifyTree->setMinimumHeight(200);
+    auto addBox = [&](QTreeWidgetItem *parent, const QString &id, const QString &name, const char *icon,
+                      const QColor &color) {
+        auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_notifyTree);
+        item->setText(0, name);
+        item->setIcon(0, tinted(icon, color));
+        item->setData(0, Qt::UserRole, id);
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, Qt::Unchecked);
+        return item;
+    };
+    QTreeWidgetItem *inbox = nullptr;
+    for (const SectionDef &section : sidebarSections())
+        for (const FolderDef &f : section.folders) {
+            const QString id = f.id;
+            if (id == "INBOX") {
+                inbox = addBox(nullptr, id, QString("%1 (toutes les catégories)").arg(f.name), f.icon, QColor(f.color));
+                inbox->setFlags(inbox->flags() | Qt::ItemIsAutoTristate);
+            } else if (id.startsWith("CATEGORY_") && inbox) {
+                addBox(inbox, id, f.name, f.icon, QColor(f.color));
+            } else if (id == "IMPORTANT" || id == "STARRED") {
+                addBox(nullptr, id, f.name, f.icon, QColor(f.color));
+            }
+        }
+    if (!m_labels.isEmpty()) {
+        auto *labelsRoot = addBox(nullptr, "__labels__", "Libellés", "label", {});
+        labelsRoot->setFlags(labelsRoot->flags() | Qt::ItemIsAutoTristate);
+        for (const LabelChoice &l : std::as_const(m_labels))
+            addBox(labelsRoot, l.id, l.name, "label", l.color);
+    }
+    m_notifyTree->expandAll();
+    connect(m_notifications, &QCheckBox::toggled, m_notifyTree, &QWidget::setEnabled);
+    form->addRow("Me prévenir pour :", m_notifyTree);
+    form->addRow(hint("Cochez la boîte de réception pour tout recevoir, ou seulement certaines catégories "
+                      "(par exemple Principale sans Promotions)."));
     v->addWidget(mailBox);
 
     auto *readBox = new QGroupBox("Lecture");
@@ -530,6 +592,19 @@ void SettingsDialog::load()
     selectData(m_poll, m_settings.value("poll_minutes", 1).toInt());
     m_notifications->setChecked(m_settings.value("notifications", true).toBool());
     selectData(m_markRead, m_settings.value("mark_read", "immediate").toString());
+    const int start = m_startFolder->findData(m_settings.value("start_folder", "INBOX").toString());
+    m_startFolder->setCurrentIndex(start >= 0 ? start : m_startFolder->findData("INBOX"));
+
+    const QStringList notify = m_settings.value("notify_folders", QStringList{"INBOX"}).toStringList();
+    for (QTreeWidgetItemIterator it(m_notifyTree); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QString id = item->data(0, Qt::UserRole).toString();
+        if (id == "INBOX" && notify.contains("INBOX"))
+            item->setCheckState(0, Qt::Checked); // coche aussi toutes les catégories
+        else if (item->childCount() == 0 && notify.contains(id))
+            item->setCheckState(0, Qt::Checked);
+    }
+    m_notifyTree->setEnabled(m_notifications->isChecked());
 
     selectData(m_remoteImages, m_settings.value("remote_images", "ask").toString());
     m_trusted->addItems(m_settings.value("trusted_senders").toStringList());
@@ -556,6 +631,19 @@ void SettingsDialog::save()
     m_settings.setValue("poll_minutes", m_poll->currentData().toInt());
     m_settings.setValue("notifications", m_notifications->isChecked());
     m_settings.setValue("mark_read", m_markRead->currentData().toString());
+    m_settings.setValue("start_folder", m_startFolder->currentData().toString());
+
+    QStringList notify;
+    for (QTreeWidgetItemIterator it(m_notifyTree); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QString id = item->data(0, Qt::UserRole).toString();
+        const bool underCheckedInbox = item->parent() && item->parent()->data(0, Qt::UserRole) == "INBOX"
+                                       && item->parent()->checkState(0) == Qt::Checked;
+        if (id == "INBOX" ? item->checkState(0) == Qt::Checked
+                          : (item->childCount() == 0 && item->checkState(0) == Qt::Checked && !underCheckedInbox))
+            notify << id;
+    }
+    m_settings.setValue("notify_folders", notify);
 
     m_settings.setValue("remote_images", m_remoteImages->currentData().toString());
     QStringList trusted;

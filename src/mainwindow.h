@@ -1,6 +1,7 @@
 #pragma once
 #include "composer.h"
 #include "mime.h"
+#include "settingsdialog.h"
 
 #include <QHash>
 #include <QMainWindow>
@@ -37,6 +38,7 @@ public:
     bool hasTray() const { return m_tray != nullptr; }
     void applySettings(); // relit les réglages et les applique à la fenêtre
     void populateFolders(const QJsonObject &labels); // barre latérale à partir de labels.list
+    void restoreStartFolder(); // boîte à ouvrir au démarrage, d'après les paramètres
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -96,6 +98,8 @@ private:
 
     // Nouveaux messages, barre système
     void checkNewMail();
+    QString folderName(const QString &id) const;
+    QList<LabelChoice> userLabelChoices() const;
     void notify(const QString &title, const QString &text);
     void setUnread(int count);
     QIcon badgeIcon(int count) const;
@@ -133,6 +137,9 @@ private:
     QString m_remoteMode = "ask";
     bool m_closeToTray = true;
     bool m_notificationsOn = true;
+    QStringList m_notifyFolders;      // boîtes dont les nouveaux messages sont notifiés
+    QString m_notifyFolder = "INBOX"; // boîte ouverte au clic sur la dernière notification
+    int m_pollGeneration = 0;
 
     QString m_currentLabel = "INBOX";
     QString m_query;

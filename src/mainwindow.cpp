@@ -36,43 +36,12 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
+#include <QMap>
 #include <memory>
 
 namespace {
-struct FolderDef {
-    const char *id, *name, *icon, *color; // icône : data/sidebar/<icon>.svg ; couleur vide : couleur du texte
-};
-struct SectionDef {
-    const char *key, *title;
-    QList<FolderDef> folders;
-};
-// Barre latérale : sections repliables et leurs dossiers (couleurs inspirées de Gmail)
-const QList<SectionDef> &sidebarSections()
-{
-    static const QList<SectionDef> sections = {
-        {"mail", "Messagerie", {
-            {"INBOX", "Boîte de réception", "inbox", ""},
-            {"STARRED", "Suivis", "star", "#f4b400"},
-            {"IMPORTANT", "Importants", "important", "#e8a100"},
-            {"SENT", "Envoyés", "sent", ""},
-            {"DRAFT", "Brouillons", "draft", ""},
-        }},
-        {"categories", "Catégories", {
-            {"CATEGORY_PERSONAL", "Principale", "inbox", "#d93025"},
-            {"CATEGORY_SOCIAL", "Réseaux sociaux", "social", "#1a73e8"},
-            {"CATEGORY_PROMOTIONS", "Promotions", "promotions", "#188038"},
-            {"CATEGORY_UPDATES", "Notifications", "updates", "#e37400"},
-            {"CATEGORY_FORUMS", "Forums", "forums", "#9334e6"},
-        }},
-        {"more", "Plus", {
-            {"", "Tous les messages", "allmail", ""},
-            {"SPAM", "Spam", "spam", ""},
-            {"TRASH", "Corbeille", "trash", ""},
-        }},
-    };
-    return sections;
-}
 } // namespace
 
 MainWindow::MainWindow()
@@ -439,8 +408,8 @@ void MainWindow::setupTray()
     });
     connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
         bringToFront();
-        if (auto *inbox = m_folderItems.value("INBOX"))
-            m_folders->setCurrentItem(inbox);
+        if (auto *box = m_folderItems.value(m_notifyFolder, m_folderItems.value("INBOX")))
+            m_folders->setCurrentItem(box);
     });
     m_tray->show();
 }
@@ -470,7 +439,7 @@ void MainWindow::updateActions()
 // =============================================================================
 void MainWindow::openSettings()
 {
-    auto *dlg = new SettingsDialog(m_settings, m_email, this);
+    auto *dlg = new SettingsDialog(m_settings, m_email, userLabelChoices(), this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     connect(dlg, &SettingsDialog::applied, this, &MainWindow::applySettings);
     connect(dlg, &SettingsDialog::logoutRequested, this, [this, dlg] {
@@ -545,6 +514,14 @@ void MainWindow::applySettings()
     m_pollTimer->setInterval(m_settings.value("poll_minutes", 1).toInt() * 60 * 1000);
     m_markReadMode = m_settings.value("mark_read", "immediate").toString();
     m_remoteMode = m_settings.value("remote_images", "ask").toString();
+    const QStringList notifyFolders = m_settings.value("notify_folders", QStringList{"INBOX"}).toStringList();
+    if (notifyFolders != m_notifyFolders) {
+        // Nouvelles boîtes surveillées : la prochaine relève mémorise leurs non-lus sans notifier
+        m_notifyFolders = notifyFolders;
+        m_knownUnread.clear();
+        m_unreadSeeded = false;
+        ++m_pollGeneration;
+    }
     m_knownAddresses = m_settings.value("known_addresses").toStringList();
 
     // Réaffiche le message ouvert avec les nouveaux réglages d'images
@@ -609,7 +586,7 @@ void MainWindow::onLoggedIn()
         m_pages->setCurrentIndex(1);
         m_unreadSeeded = false;
         m_knownUnread.clear();
-        m_currentLabel = "INBOX";
+        restoreStartFolder();
         loadLabels();
         checkNewMail();
         m_pollTimer->start();
@@ -690,7 +667,7 @@ void MainWindow::populateFolders(const QJsonObject &obj)
             auto *item = new QTreeWidgetItem(parent);
             item->setData(0, FolderRoles::Id, id);
             item->setData(0, FolderRoles::Name, name);
-            item->setIcon(0, QIcon(":/sidebar/" + icon + ".svg")); // icônes au trait fournies avec G-Desk
+            item->setIcon(0, folderIcon(icon));
             if (color.isValid())
                 item->setData(0, FolderRoles::Color, color);
             item->setToolTip(0, name);
@@ -729,6 +706,8 @@ void MainWindow::populateFolders(const QJsonObject &obj)
         }
 
         QTreeWidgetItem *current = m_folderItems.value(m_currentLabel, m_folderItems.value("INBOX"));
+        for (QTreeWidgetItem *p = current ? current->parent() : nullptr; p; p = p->parent())
+            p->setExpanded(true); // boîte de démarrage dans une section repliée
         m_folders->setCurrentItem(current);
     }
     if (m_email.isEmpty())
@@ -767,6 +746,7 @@ void MainWindow::onFolderChanged()
     if (!item)
         return;
     m_currentLabel = item->data(0, FolderRoles::Id).toString();
+    m_settings.setValue("last_folder", m_currentLabel);
     m_query.clear();
     {
         QSignalBlocker b(m_search);
@@ -1239,39 +1219,121 @@ void MainWindow::checkNewMail()
 {
     if (m_email.isEmpty())
         return;
-    m_api->listMessages({"INBOX", "UNREAD"}, {}, {}, 30, [this](const QJsonObject &obj, const QString &err) {
-        if (!err.isEmpty())
-            return;
-        QStringList fresh;
-        for (const QJsonValue &v : obj.value("messages").toArray()) {
-            const QString id = v.toObject().value("id").toString();
-            if (!m_knownUnread.contains(id)) {
-                m_knownUnread.insert(id);
-                if (m_unreadSeeded)
-                    fresh << id;
-            }
-        }
-        m_unreadSeeded = true;
-        refreshCounts();
-        if (fresh.isEmpty())
-            return;
+    // Boîtes interrogées : celles choisies pour les notifications, plus la réception
+    // (pour rafraîchir la liste et la pastille même si on n'en veut pas les notifications)
+    QStringList polled = m_notifyFolders;
+    if (!polled.contains("INBOX"))
+        polled.prepend("INBOX");
+    const int generation = ++m_pollGeneration;
+    auto remaining = std::make_shared<int>(polled.size());
+    auto fresh = std::make_shared<QMap<QString, QStringList>>(); // message → boîtes où il est apparu
 
-        if (m_currentLabel == "INBOX" && m_query.isEmpty() && m_list->verticalScrollBar()->value() < 20)
-            reloadList(m_openId);
-        if (!m_notificationsOn)
-            return;
-        if (fresh.size() > 3) {
-            notify(QString("%1 nouveaux messages").arg(fresh.size()), m_email);
-            return;
-        }
-        for (const QString &id : fresh)
-            m_api->getMessage(id, false, [this](const QJsonObject &o, const QString &e) {
-                if (!e.isEmpty())
-                    return;
-                const MailMessage m = Mime::parseMessage(o);
-                notify(Mime::displayName(m.from), m.subject.isEmpty() ? m.snippet : m.subject);
-            });
-    });
+    for (const QString &box : std::as_const(polled)) {
+        m_api->listMessages({box, "UNREAD"}, {}, {}, 25,
+                            [this, generation, remaining, fresh, box](const QJsonObject &obj, const QString &err) {
+            if (generation != m_pollGeneration)
+                return; // réglages modifiés entre-temps
+            if (err.isEmpty())
+                for (const QJsonValue &v : obj.value("messages").toArray()) {
+                    const QString id = v.toObject().value("id").toString();
+                    if (!m_knownUnread.contains(id))
+                        (*fresh)[id] << box;
+                }
+            if (--*remaining > 0)
+                return;
+
+            // Toutes les boîtes ont répondu
+            const bool seeded = m_unreadSeeded;
+            for (auto it = fresh->cbegin(); it != fresh->cend(); ++it)
+                m_knownUnread.insert(it.key());
+            m_unreadSeeded = true; // la première relève ne fait que mémoriser l'existant
+            refreshCounts();
+            if (!seeded || fresh->isEmpty())
+                return;
+
+            bool currentHit = false;
+            for (const QStringList &boxes : std::as_const(*fresh))
+                currentHit |= boxes.contains(m_currentLabel);
+            if (currentHit && m_query.isEmpty() && m_list->verticalScrollBar()->value() < 20)
+                reloadList(m_openId);
+
+            if (!m_notificationsOn)
+                return;
+            QList<QPair<QString, QString>> toNotify; // (message, boîte surveillée)
+            for (auto it = fresh->cbegin(); it != fresh->cend(); ++it)
+                for (const QString &b : it.value())
+                    if (m_notifyFolders.contains(b)) {
+                        toNotify.append({it.key(), b});
+                        break;
+                    }
+            if (toNotify.isEmpty())
+                return;
+            m_notifyFolder = toNotify.first().second;
+            if (toNotify.size() > 3) {
+                QStringList names;
+                for (const auto &[id, b] : std::as_const(toNotify))
+                    if (!names.contains(folderName(b)))
+                        names << folderName(b);
+                notify(QString("%1 nouveaux messages").arg(toNotify.size()), names.join(", "));
+                return;
+            }
+            for (const auto &[id, b] : std::as_const(toNotify))
+                m_api->getMessage(id, false, [this, b](const QJsonObject &o, const QString &e) {
+                    if (!e.isEmpty())
+                        return;
+                    const MailMessage m = Mime::parseMessage(o);
+                    // Précise la boîte (ou la catégorie) d'où vient le message
+                    QString where = b == "INBOX" ? QString() : folderName(b);
+                    if (where.isEmpty())
+                        for (const char *cat : {"CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES",
+                                                "CATEGORY_FORUMS"})
+                            if (m.labelIds.contains(cat))
+                                where = folderName(cat);
+                    notify(where.isEmpty() ? Mime::displayName(m.from) : Mime::displayName(m.from) + " · " + where,
+                           m.subject.isEmpty() ? m.snippet : m.subject);
+                });
+        });
+    }
+}
+
+void MainWindow::restoreStartFolder()
+{
+    QString start = m_settings.value("start_folder", "INBOX").toString();
+    if (start == "__last__")
+        start = m_settings.value("last_folder", "INBOX").toString();
+    m_currentLabel = start; // si la boîte n'existe plus, la barre latérale revient à la réception
+}
+
+QString MainWindow::folderName(const QString &id) const
+{
+    if (QTreeWidgetItem *item = m_folderItems.value(id))
+        return item->data(0, FolderRoles::Name).toString();
+    for (const SectionDef &section : sidebarSections())
+        for (const FolderDef &f : section.folders)
+            if (id == f.id)
+                return f.name;
+    return id;
+}
+
+QList<LabelChoice> MainWindow::userLabelChoices() const
+{
+    QList<LabelChoice> labels;
+    for (QTreeWidgetItemIterator it(m_folders); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        if (!item->data(0, FolderRoles::SectionKey).toString().isEmpty())
+            continue;
+        QTreeWidgetItem *top = item;
+        while (top->parent())
+            top = top->parent();
+        if (top->data(0, FolderRoles::SectionKey).toString() != "labels")
+            continue;
+        QStringList path;
+        for (QTreeWidgetItem *p = item; p && p != top; p = p->parent())
+            path.prepend(p->data(0, FolderRoles::Name).toString());
+        labels.append({item->data(0, FolderRoles::Id).toString(), path.join(" / "),
+                       item->data(0, FolderRoles::Color).value<QColor>()});
+    }
+    return labels;
 }
 
 void MainWindow::notify(const QString &title, const QString &text)

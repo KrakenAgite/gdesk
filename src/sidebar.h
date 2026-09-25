@@ -1,5 +1,7 @@
 #pragma once
 #include <QAbstractButton>
+#include <QIcon>
+#include <QList>
 #include <QStyledItemDelegate>
 
 // Données des éléments de la barre latérale (QTreeWidget des dossiers, colonne 0)
@@ -12,6 +14,17 @@ enum {
     SectionKey,          // clé d'une section (en-tête repliable) ; vide pour un dossier
 };
 }
+
+struct FolderDef {
+    const char *id, *name, *icon, *color; // icône : data/sidebar/<icon>.svg ; couleur vide : couleur du texte
+};
+struct SectionDef {
+    const char *key, *title;
+    QList<FolderDef> folders;
+};
+// Boîtes fixes de la barre latérale, par section (les libellés personnels s'y ajoutent)
+const QList<SectionDef> &sidebarSections();
+QIcon folderIcon(const QString &iconName); // icône au trait fournie avec G-Desk
 
 // Dessine les en-têtes de section, les dossiers (icône teintée, nom, pastille de non-lus)
 // et la sélection arrondie.

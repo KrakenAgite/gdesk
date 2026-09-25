@@ -23,6 +23,38 @@ constexpr int SideMargin = 8;
 constexpr int IconSize = 18;
 } // namespace
 
+// Couleurs des catégories inspirées de Gmail
+const QList<SectionDef> &sidebarSections()
+{
+    static const QList<SectionDef> sections = {
+        {"mail", "Messagerie", {
+            {"INBOX", "Boîte de réception", "inbox", ""},
+            {"STARRED", "Suivis", "star", "#f4b400"},
+            {"IMPORTANT", "Importants", "important", "#e8a100"},
+            {"SENT", "Envoyés", "sent", ""},
+            {"DRAFT", "Brouillons", "draft", ""},
+        }},
+        {"categories", "Catégories", {
+            {"CATEGORY_PERSONAL", "Principale", "inbox", "#d93025"},
+            {"CATEGORY_SOCIAL", "Réseaux sociaux", "social", "#1a73e8"},
+            {"CATEGORY_PROMOTIONS", "Promotions", "promotions", "#188038"},
+            {"CATEGORY_UPDATES", "Notifications", "updates", "#e37400"},
+            {"CATEGORY_FORUMS", "Forums", "forums", "#9334e6"},
+        }},
+        {"more", "Plus", {
+            {"", "Tous les messages", "allmail", ""},
+            {"SPAM", "Spam", "spam", ""},
+            {"TRASH", "Corbeille", "trash", ""},
+        }},
+    };
+    return sections;
+}
+
+QIcon folderIcon(const QString &iconName)
+{
+    return QIcon(":/sidebar/" + iconName + ".svg");
+}
+
 QPixmap tintedIcon(const QIcon &icon, int size, const QColor &color, qreal dpr)
 {
     QPixmap pm = icon.pixmap(QSize(size, size), dpr);

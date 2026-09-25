@@ -1,6 +1,8 @@
 #pragma once
 #include <QAbstractButton>
+#include <QColor>
 #include <QDialog>
+#include <QList>
 
 class QButtonGroup;
 class QCheckBox;
@@ -11,6 +13,13 @@ class QListWidget;
 class QPlainTextEdit;
 class QSettings;
 class QSlider;
+class QTreeWidget;
+
+// Libellé personnel Gmail proposé dans les paramètres (boîte de démarrage, notifications)
+struct LabelChoice {
+    QString id, name;
+    QColor color;
+};
 
 // Vignette cliquable qui dessine une miniature de la fenêtre (thème, densité, disposition)
 class PreviewCard : public QAbstractButton
@@ -36,7 +45,8 @@ class SettingsDialog : public QDialog
 {
     Q_OBJECT
 public:
-    SettingsDialog(QSettings &settings, const QString &email, QWidget *parent = nullptr);
+    SettingsDialog(QSettings &settings, const QString &email, const QList<LabelChoice> &labels = {},
+                   QWidget *parent = nullptr);
 
     static QString autostartPath();
 
@@ -65,7 +75,9 @@ private:
     QLineEdit *m_senderName;
     QPlainTextEdit *m_signature;
     QCheckBox *m_closeToTray, *m_autostart, *m_startMinimized, *m_notifications;
-    QComboBox *m_poll, *m_markRead, *m_remoteImages;
+    QComboBox *m_poll, *m_markRead, *m_remoteImages, *m_startFolder;
+    QTreeWidget *m_notifyTree;
+    QList<LabelChoice> m_labels;
     QListWidget *m_trusted;
     QLabel *m_addressCount;
     bool m_clearAddresses = false;

@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QJsonArray>
+#include <QComboBox>
 #include <QListWidget>
 #include <QMenu>
 #include <QPlainTextEdit>
@@ -26,6 +27,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -657,10 +659,112 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
             picker->menu()->close();
         }
     }
+    void startFolderAndNotifications()
+    {
+        QTemporaryDir dir;
+        QSettings settings(dir.filePath("gdesk.conf"), QSettings::IniFormat);
+        const QList<LabelChoice> labels{{"Label_1", "Factures", QColor("#fb4c2f")},
+                                        {"Label_3", "Voyages / Japon 2026", QColor("#4a86e8")}};
+        {
+            SettingsDialog dlg(settings, "moi@gmail.com", labels);
+            auto combos = dlg.findChildren<QComboBox *>();
+            QComboBox *start = nullptr;
+            for (QComboBox *c : combos)
+                if (c->findData("__last__") >= 0)
+                    start = c;
+            QVERIFY(start);
+            QCOMPARE(start->currentData().toString(), QString("INBOX")); // valeur par défaut
+            for (const char *id : {"CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "STARRED", "Label_3"})
+                QVERIFY2(start->findData(id) >= 0, id);
+            start->setCurrentIndex(start->findData("CATEGORY_SOCIAL"));
+
+            QTreeWidget *tree = nullptr;
+            for (QTreeWidget *t : dlg.findChildren<QTreeWidget *>())
+                if (t->topLevelItemCount() > 0 && t->topLevelItem(0)->flags() & Qt::ItemIsUserCheckable)
+                    tree = t;
+            QVERIFY(tree);
+            QHash<QString, QTreeWidgetItem *> items;
+            for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                items.insert((*it)->data(0, Qt::UserRole).toString(), *it);
+            // Par défaut : réception cochée, donc toutes ses catégories
+            QCOMPARE(items["INBOX"]->checkState(0), Qt::Checked);
+            QCOMPARE(items["CATEGORY_PROMOTIONS"]->checkState(0), Qt::Checked);
+            QCOMPARE(items["Label_1"]->checkState(0), Qt::Unchecked);
+            // Tout sauf Promotions, plus un libellé
+            items["CATEGORY_PROMOTIONS"]->setCheckState(0, Qt::Unchecked);
+            QCOMPARE(items["INBOX"]->checkState(0), Qt::PartiallyChecked);
+            items["Label_1"]->setCheckState(0, Qt::Checked);
+            items["STARRED"]->setCheckState(0, Qt::Checked);
+            dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();
+        }
+        QCOMPARE(settings.value("start_folder").toString(), QString("CATEGORY_SOCIAL"));
+        QStringList notify = settings.value("notify_folders").toStringList();
+        notify.sort();
+        QCOMPARE(notify, (QStringList{"CATEGORY_FORUMS", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_UPDATES",
+                                     "Label_1", "STARRED"}));
+        {
+            // Relecture : Promotions décochée, réception partielle
+            SettingsDialog dlg(settings, "moi@gmail.com", labels);
+            QHash<QString, QTreeWidgetItem *> items;
+            for (QTreeWidget *t : dlg.findChildren<QTreeWidget *>())
+                for (QTreeWidgetItemIterator it(t); *it; ++it)
+                    items.insert((*it)->data(0, Qt::UserRole).toString(), *it);
+            QCOMPARE(items["INBOX"]->checkState(0), Qt::PartiallyChecked);
+            QCOMPARE(items["CATEGORY_PROMOTIONS"]->checkState(0), Qt::Unchecked);
+            QCOMPARE(items["Label_1"]->checkState(0), Qt::Checked);
+            // Tout recocher : la réception entière est enregistrée, sans lister ses catégories
+            items["INBOX"]->setCheckState(0, Qt::Checked);
+            items["Label_1"]->setCheckState(0, Qt::Unchecked);
+            items["STARRED"]->setCheckState(0, Qt::Unchecked);
+            dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();
+            const QString out = qEnvironmentVariable("GDESK_TEST_OUT");
+            if (!out.isEmpty()) {
+                items["CATEGORY_PROMOTIONS"]->setCheckState(0, Qt::Unchecked);
+                auto *nav = dlg.findChildren<QListWidget *>().value(0);
+                nav->setCurrentRow(2);
+                dlg.resize(840, 1000);
+                dlg.show();
+                QTest::qWait(100);
+                dlg.grab().save(out + "/settings-general.png");
+            }
+        }
+        QCOMPARE(settings.value("notify_folders").toStringList(), QStringList{"INBOX"});
+
+        // Démarrage sur une catégorie dont la section est repliée
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        {
+            QSettings s("gdesk", "gdesk");
+            s.setValue("start_folder", "CATEGORY_SOCIAL");
+            s.setValue("sidebar_collapsed", QStringList{"categories"});
+        }
+        MainWindow win;
+        win.restoreStartFolder();
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        QTreeWidget *folders = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<FolderDelegate *>(t->itemDelegate()))
+                folders = t;
+        QVERIFY(folders && folders->currentItem());
+        QCOMPARE(folders->currentItem()->data(0, FolderRoles::Id).toString(), QString("CATEGORY_SOCIAL"));
+        QVERIFY(folders->currentItem()->parent()->isExpanded());
+
+        // « Dernière boîte consultée »
+        {
+            QSettings s("gdesk", "gdesk");
+            s.setValue("start_folder", "__last__");
+            s.setValue("last_folder", "STARRED");
+        }
+        win.restoreStartFolder();
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        QCOMPARE(folders->currentItem()->data(0, FolderRoles::Id).toString(), QString("STARRED"));
+    }
 };
 
 int main(int argc, char *argv[])
 {
+    // Dossiers de test séparés (~/.qttest) : les tests ne touchent jamais la configuration réelle
+    // (réglages, démarrage automatique, portefeuille de secours…)
+    QStandardPaths::setTestModeEnabled(true);
     MessageView::registerScheme();
     QApplication app(argc, argv);
     // Sans écran (QT_QPA_PLATFORM=offscreen), Qt ne cherche pas les icônes du système

@@ -48,6 +48,11 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.3.0" date="2026-09-25">
+      <description>
+        <p>Choose the folder shown at startup (or the last one used), and choose which folders and Gmail categories trigger notifications. Notifications show the category and open the right folder.</p>
+      </description>
+    </release>
     <release version="2.2.0" date="2026-09-25">
       <description>
         <p>Messages are now shown as cards: sender in bold with the date opposite, subject below and the beginning of the message when there is room.</p>
