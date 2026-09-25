@@ -25,6 +25,7 @@ public:
                       int maxResults, Callback cb);
     void getMessage(const QString &id, bool full, Callback cb);
     // URL de messages.list (exposée pour les tests d'encodage)
+    static void setBaseUrlForTesting(const QString &url); // faux serveur Gmail des tests
     static QUrl messagesUrl(const QStringList &labelIds, const QString &query, const QString &pageToken, int maxResults);
     void modifyMessages(const QStringList &ids, const QStringList &add, const QStringList &remove, Callback cb);
     void trashMessage(const QString &id, Callback cb);

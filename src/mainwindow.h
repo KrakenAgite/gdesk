@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <QSystemTrayIcon>
 #include <functional>
+#include <memory>
 
 class GmailApi;
 class GoogleAuth;
@@ -39,6 +40,7 @@ public:
     void applySettings(); // relit les réglages et les applique à la fenêtre
     void populateFolders(const QJsonObject &labels); // barre latérale à partir de labels.list
     void restoreStartFolder(); // boîte à ouvrir au démarrage, d'après les paramètres
+    QMenu *folderMenu(const QString &folderId); // clic droit sur une boîte
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -99,6 +101,15 @@ private:
     // Nouveaux messages, barre système
     void checkNewMail();
     QString folderName(const QString &id) const;
+    void selectAllMessages(const QString &folderId);
+    void markAllInFolder(const QString &folderId, bool read);
+    void emptyFolder(const QString &folderId);
+    void collectMessageIds(const QStringList &labels, const QString &query, const QString &pageToken,
+                           std::shared_ptr<QStringList> ids,
+                           std::function<void(const QStringList &, const QString &)> done);
+    void batchModifyAll(const QStringList &ids, const QStringList &add, const QStringList &remove,
+                        std::function<void(int done, const QString &error)> finished, int offset = 0);
+    void applyLabelsToRows(const QStringList &ids, const QStringList &add, const QStringList &remove);
     QList<LabelChoice> userLabelChoices() const;
     void notify(const QString &title, const QString &text);
     void setUnread(int count);
@@ -140,6 +151,8 @@ private:
     QStringList m_notifyFolders;      // boîtes dont les nouveaux messages sont notifiés
     QString m_notifyFolder = "INBOX"; // boîte ouverte au clic sur la dernière notification
     int m_pollGeneration = 0;
+    bool m_bulkBusy = false;         // opération en masse en cours (tout marquer, vider)
+    bool m_selectAllPending = false; // tout sélectionner dès que la liste est chargée
 
     QString m_currentLabel = "INBOX";
     QString m_query;

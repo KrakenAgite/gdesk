@@ -221,8 +221,23 @@ void GoogleAuth::exchangeCode(const QString &code)
               });
 }
 
+static QString &testAccessToken()
+{
+    static QString token;
+    return token;
+}
+
+void GoogleAuth::setAccessTokenForTesting(const QString &token)
+{
+    testAccessToken() = token;
+}
+
 void GoogleAuth::accessToken(TokenCallback cb)
 {
+    if (!testAccessToken().isEmpty()) {
+        cb(testAccessToken(), {});
+        return;
+    }
     if (!m_accessToken.isEmpty() && QDateTime::currentDateTimeUtc() < m_expiry.addSecs(-60)) {
         cb(m_accessToken, {});
         return;

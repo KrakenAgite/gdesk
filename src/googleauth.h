@@ -34,6 +34,7 @@ public:
     // Fournit un jeton d'accès valide (le rafraîchit si besoin)
     void accessToken(TokenCallback cb);
     void invalidateAccessToken() { m_accessToken.clear(); }
+    static void setAccessTokenForTesting(const QString &token); // tests : jeton fixe, sans connexion
 
 signals:
     void loggedIn();

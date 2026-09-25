@@ -40,6 +40,7 @@
 #include <QVBoxLayout>
 #include <QMap>
 #include <memory>
+#include <utility>
 
 namespace {
 } // namespace
@@ -285,6 +286,14 @@ QWidget *MainWindow::buildMailPage()
             QSignalBlocker b(m_folders);
             m_folders->setCurrentItem(cur);
         }
+    });
+    m_folders->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_folders, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QTreeWidgetItem *item = m_folders->itemAt(pos);
+        if (!item || !item->data(0, FolderRoles::SectionKey).toString().isEmpty()
+            || !item->data(0, FolderRoles::Id).isValid())
+            return;
+        folderMenu(item->data(0, FolderRoles::Id).toString())->popup(m_folders->viewport()->mapToGlobal(pos));
     });
     sideLayout->addWidget(m_folders, 1);
 
@@ -792,6 +801,7 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
         }
         m_nextPageToken = obj.value("nextPageToken").toString();
         const QJsonArray messages = obj.value("messages").toArray();
+        const bool selectAllAfter = std::exchange(m_selectAllPending, false);
         if (m_list->topLevelItemCount() == 0 && messages.isEmpty())
             statusBar()->showMessage(m_query.isEmpty() ? "Aucun message." : "Aucun résultat.");
         else if (!m_query.isEmpty())
@@ -817,6 +827,10 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
                 if (QTreeWidgetItem *it = m_rows.value(id))
                     fillRow(it, Mime::parseMessage(o));
             });
+        }
+        if (selectAllAfter) {
+            m_list->selectAll();
+            m_list->setFocus();
         }
     });
 }
@@ -866,6 +880,8 @@ void MainWindow::removeRows(const QList<QTreeWidgetItem *> &items)
 void MainWindow::onSelectionChanged()
 {
     const QList<QTreeWidgetItem *> selected = m_list->selectedItems();
+    if (selected.size() > 1)
+        statusBar()->showMessage(QString("%L1 messages sélectionnés").arg(selected.size()));
     if (selected.size() == 1 && !m_restoringSelection) {
         const QString id = selected.first()->data(0, MailRoles::Id).toString();
         if (id != m_openId)
@@ -1302,6 +1318,201 @@ void MainWindow::restoreStartFolder()
     if (start == "__last__")
         start = m_settings.value("last_folder", "INBOX").toString();
     m_currentLabel = start; // si la boîte n'existe plus, la barre latérale revient à la réception
+}
+
+// =============================================================================
+//  Menu contextuel d'une boîte et opérations en masse
+// =============================================================================
+QMenu *MainWindow::folderMenu(const QString &id)
+{
+    auto *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setToolTipsVisible(true);
+    const QString name = folderName(id);
+    const bool isDraft = id == "DRAFT";
+
+    auto *select = menu->addAction(QIcon::fromTheme("edit-select-all"), "Sélectionner tous les messages", this,
+                                   [this, id] { selectAllMessages(id); });
+    select->setObjectName("selectAll");
+    menu->addSeparator();
+    auto *read = menu->addAction(QIcon::fromTheme("mail-mark-read"), "Tout marquer comme lu", this,
+                                 [this, id] { markAllInFolder(id, true); });
+    read->setObjectName("markRead");
+    auto *unread = menu->addAction(QIcon::fromTheme("mail-mark-unread"), "Tout marquer comme non lu", this,
+                                   [this, id] { markAllInFolder(id, false); });
+    unread->setObjectName("markUnread");
+    read->setEnabled(!isDraft);
+    unread->setEnabled(!isDraft);
+    menu->addSeparator();
+
+    if (id == "TRASH") {
+        // La suppression définitive exige une autorisation Google plus large que celle de G-Desk
+        auto *web = menu->addAction(QIcon::fromTheme("trash-empty"), "Vider la corbeille dans Gmail…", this,
+                                    [] { QDesktopServices::openUrl(QUrl("https://mail.google.com/mail/u/0/#trash")); });
+        web->setObjectName("emptyTrashWeb");
+        web->setToolTip("Ouvre la corbeille de Gmail dans le navigateur (Gmail la vide aussi seul après 30 jours).");
+    } else {
+        auto *empty = menu->addAction(QIcon::fromTheme("edit-delete"),
+                                      id == "SPAM" ? QString("Vider le spam…") : QString("Vider « %1 »…").arg(name),
+                                      this, [this, id] { emptyFolder(id); });
+        empty->setObjectName("empty");
+        if (id.isEmpty()) {
+            empty->setEnabled(false);
+            empty->setToolTip("Par sécurité, « Tous les messages » ne peut pas être vidé d'un coup.");
+        }
+    }
+    if (m_bulkBusy)
+        for (QAction *a : menu->actions())
+            a->setEnabled(false);
+    return menu;
+}
+
+void MainWindow::selectAllMessages(const QString &id)
+{
+    if (id != m_currentLabel || !m_query.isEmpty() || m_list->topLevelItemCount() == 0) {
+        m_selectAllPending = true; // appliqué à la fin du chargement de la liste
+        if (QTreeWidgetItem *item = m_folderItems.value(id); item && id != m_currentLabel)
+            m_folders->setCurrentItem(item); // déclenche le chargement
+        else
+            reloadList();
+        return;
+    }
+    m_list->selectAll();
+    m_list->setFocus();
+}
+
+void MainWindow::collectMessageIds(const QStringList &labels, const QString &query, const QString &pageToken,
+                                   std::shared_ptr<QStringList> ids,
+                                   std::function<void(const QStringList &, const QString &)> done)
+{
+    m_api->listMessages(labels, query, pageToken, 500,
+                        [this, labels, query, ids, done](const QJsonObject &obj, const QString &err) {
+        if (!err.isEmpty()) {
+            done(*ids, err);
+            return;
+        }
+        for (const QJsonValue &v : obj.value("messages").toArray())
+            ids->append(v.toObject().value("id").toString());
+        statusBar()->showMessage(QString("Recherche des messages… %L1").arg(ids->size()));
+        const QString next = obj.value("nextPageToken").toString();
+        if (next.isEmpty())
+            done(*ids, {});
+        else
+            collectMessageIds(labels, query, next, ids, done);
+    });
+}
+
+// L'API accepte au plus 1 000 messages par appel : on enchaîne les paquets
+void MainWindow::batchModifyAll(const QStringList &ids, const QStringList &add, const QStringList &remove,
+                                std::function<void(int, const QString &)> finished, int offset)
+{
+    if (offset >= ids.size()) {
+        finished(ids.size(), {});
+        return;
+    }
+    const QStringList chunk = ids.mid(offset, 1000);
+    statusBar()->showMessage(QString("Mise à jour… %L1 / %L2").arg(offset).arg(ids.size()));
+    m_api->modifyMessages(chunk, add, remove,
+                          [this, ids, add, remove, finished, offset, n = chunk.size()](const QJsonObject &,
+                                                                                        const QString &err) {
+        if (!err.isEmpty()) {
+            finished(offset, err);
+            return;
+        }
+        batchModifyAll(ids, add, remove, finished, offset + n);
+    });
+}
+
+void MainWindow::applyLabelsToRows(const QStringList &ids, const QStringList &add, const QStringList &remove)
+{
+    for (const QString &id : ids)
+        if (QTreeWidgetItem *item = m_rows.value(id)) {
+            QStringList labels = item->data(0, MailRoles::Labels).toStringList();
+            for (const QString &l : remove)
+                labels.removeAll(l);
+            for (const QString &l : add)
+                if (!labels.contains(l))
+                    labels << l;
+            item->setData(0, MailRoles::Labels, labels);
+        }
+}
+
+void MainWindow::markAllInFolder(const QString &id, bool read)
+{
+    if (m_bulkBusy)
+        return;
+    m_bulkBusy = true;
+    const QString name = folderName(id);
+    QStringList labels = id.isEmpty() ? QStringList() : QStringList{id};
+    if (read)
+        labels << "UNREAD"; // seuls les non-lus sont à modifier
+    collectMessageIds(labels, read ? QString() : QString("is:read"), {}, std::make_shared<QStringList>(),
+                      [this, name, read](const QStringList &ids, const QString &err) {
+        if (!err.isEmpty() || ids.isEmpty()) {
+            m_bulkBusy = false;
+            if (!err.isEmpty())
+                showError("Impossible de lister les messages", err);
+            else
+                statusBar()->showMessage(QString("Tous les messages de « %1 » sont déjà %2.")
+                                             .arg(name, read ? "lus" : "non lus"), 5000);
+            return;
+        }
+        const QStringList add = read ? QStringList() : QStringList{"UNREAD"};
+        const QStringList remove = read ? QStringList{"UNREAD"} : QStringList();
+        batchModifyAll(ids, add, remove, [this, ids, add, remove, name, read](int done, const QString &e) {
+            m_bulkBusy = false;
+            applyLabelsToRows(ids.mid(0, done), add, remove);
+            scheduleCountsRefresh();
+            if (!e.isEmpty())
+                showError(QString("Arrêt après %L1 messages").arg(done), e);
+            else
+                statusBar()->showMessage(QString("%L1 message(s) de « %2 » marqué(s) comme %3.")
+                                             .arg(done).arg(name, read ? "lu(s)" : "non lu(s)"), 6000);
+        });
+    });
+}
+
+void MainWindow::emptyFolder(const QString &id)
+{
+    if (m_bulkBusy || id.isEmpty() || id == "TRASH")
+        return;
+    m_bulkBusy = true;
+    const QString name = folderName(id);
+    collectMessageIds({id}, {}, {}, std::make_shared<QStringList>(),
+                      [this, id, name](const QStringList &ids, const QString &err) {
+        if (!err.isEmpty() || ids.isEmpty()) {
+            m_bulkBusy = false;
+            if (!err.isEmpty())
+                showError("Impossible de lister les messages", err);
+            else
+                statusBar()->showMessage(QString("« %1 » est déjà vide.").arg(name), 5000);
+            return;
+        }
+        statusBar()->clearMessage();
+        QMessageBox box(QMessageBox::Warning, QString("Vider « %1 »").arg(name),
+                        QString("Placer les %L1 message(s) de « %2 » dans la corbeille ?").arg(ids.size()).arg(name),
+                        QMessageBox::Yes | QMessageBox::Cancel, this);
+        box.setInformativeText("Vous pourrez les restaurer depuis la corbeille pendant 30 jours ; "
+                               "Gmail les supprimera ensuite définitivement.");
+        box.button(QMessageBox::Yes)->setText("Placer dans la corbeille");
+        box.setDefaultButton(QMessageBox::Cancel);
+        if (box.exec() != QMessageBox::Yes) {
+            m_bulkBusy = false;
+            return;
+        }
+        const QStringList remove = id == "SPAM" ? QStringList{"SPAM"} : QStringList();
+        batchModifyAll(ids, {"TRASH"}, remove, [this, id, name](int done, const QString &e) {
+            m_bulkBusy = false;
+            if (id == m_currentLabel)
+                reloadList();
+            scheduleCountsRefresh();
+            if (!e.isEmpty())
+                showError(QString("Arrêt après %L1 messages").arg(done), e);
+            else
+                statusBar()->showMessage(QString("%L1 message(s) de « %2 » placé(s) dans la corbeille.")
+                                             .arg(done).arg(name), 6000);
+        });
+    });
 }
 
 QString MainWindow::folderName(const QString &id) const

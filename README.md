@@ -15,6 +15,7 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
 - Répondre, répondre à tous, transférer (avec pièces jointes), nouveau message,
   pièces jointes, brouillons enregistrés dans Gmail, autocomplétion des adresses
 - Archiver, supprimer, restaurer, spam, lu/non lu, suivi — sur plusieurs messages à la fois
+- Clic droit sur une boîte : tout sélectionner, tout marquer comme lu / non lu, vider la boîte (vers la corbeille)
 - Recherche avec la syntaxe Gmail (`from:`, `has:attachment`, `after:2026/01/01`…)
 - Relève réglable, notifications KDE par boîte ou catégorie au choix, pastille de non-lus, liens `mailto:`
 - Connexion OAuth 2.0 (PKCE) dans le navigateur ; jeton rangé dans KWallet

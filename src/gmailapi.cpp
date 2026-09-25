@@ -7,7 +7,16 @@
 #include <QNetworkReply>
 #include <QTimer>
 
-static const QString BaseUrl = "https://gmail.googleapis.com/gmail/v1/users/me/";
+static QString &baseUrl()
+{
+    static QString url = "https://gmail.googleapis.com/gmail/v1/users/me/";
+    return url;
+}
+
+void GmailApi::setBaseUrlForTesting(const QString &url)
+{
+    baseUrl() = url;
+}
 
 GmailApi::GmailApi(GoogleAuth *auth, QNetworkAccessManager *nam, QObject *parent)
     : QObject(parent), m_auth(auth), m_nam(nam)
@@ -22,7 +31,7 @@ void GmailApi::call(const QByteArray &verb, const QString &path, const QUrlQuery
             cb({}, authError);
             return;
         }
-        QUrl url(BaseUrl + path);
+        QUrl url(baseUrl() + path);
         url.setQuery(query);
         QNetworkRequest req(url);
         req.setRawHeader("Authorization", "Bearer " + token.toUtf8());
@@ -90,7 +99,7 @@ static QUrlQuery messagesQuery(const QStringList &labelIds, const QString &query
 
 QUrl GmailApi::messagesUrl(const QStringList &labelIds, const QString &query, const QString &pageToken, int maxResults)
 {
-    QUrl url(BaseUrl + "messages");
+    QUrl url(baseUrl() + "messages");
     url.setQuery(messagesQuery(labelIds, query, pageToken, maxResults));
     return url;
 }

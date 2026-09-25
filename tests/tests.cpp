@@ -39,6 +39,12 @@
 #include <QTranslator>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QMessageBox>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
+#include <QRegularExpression>
+#include <QSet>
 #include <QTest>
 #include <QUrlQuery>
 #include <QWebEnginePage>
@@ -66,6 +72,139 @@ static QJsonArray headers(std::initializer_list<std::pair<const char *, QString>
         a.append(QJsonObject{{"name", n}, {"value", v}});
     return a;
 }
+
+
+// Faux serveur Gmail (HTTP local) pour tester les opérations en masse sans vrai compte
+class FakeGmail : public QObject
+{
+    Q_OBJECT
+public:
+    struct Batch {
+        int count;
+        QStringList add, remove;
+    };
+    QTcpServer server;
+    QMap<QString, QSet<QString>> messages;
+    QStringList order;
+    QList<Batch> batches;
+
+    FakeGmail()
+    {
+        server.listen(QHostAddress::LocalHost, 0);
+        connect(&server, &QTcpServer::newConnection, this, [this] {
+            while (QTcpSocket *s = server.nextPendingConnection()) {
+                connect(s, &QTcpSocket::readyRead, this, [this, s] { handle(s); });
+                connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
+            }
+        });
+    }
+    QString base() const { return QString("http://127.0.0.1:%1/gmail/v1/users/me/").arg(server.serverPort()); }
+    void add(const QString &id, const QSet<QString> &labels)
+    {
+        messages.insert(id, labels);
+        order << id;
+    }
+    int count(const QStringList &labels) const
+    {
+        int n = 0;
+        for (const QSet<QString> &l : messages)
+            n += std::all_of(labels.begin(), labels.end(), [&](const QString &x) { return l.contains(x); });
+        return n;
+    }
+
+private:
+    QJsonObject route(const QByteArray &method, const QString &path, const QUrlQuery &q, const QByteArray &body)
+    {
+        if (method == "GET" && path == "messages") {
+            const QStringList labels = q.allQueryItemValues("labelIds");
+            const QString query = q.queryItemValue("q", QUrl::FullyDecoded);
+            const bool spamTrash = q.queryItemValue("includeSpamTrash") == "true";
+            QStringList hits;
+            for (const QString &id : std::as_const(order)) {
+                const QSet<QString> &l = messages[id];
+                if (!std::all_of(labels.begin(), labels.end(), [&](const QString &x) { return l.contains(x); }))
+                    continue;
+                if (query == "is:read" && l.contains("UNREAD"))
+                    continue;
+                if (!spamTrash && (l.contains("TRASH") || l.contains("SPAM")))
+                    continue;
+                hits << id;
+            }
+            const int offset = q.queryItemValue("pageToken").toInt();
+            const int max = q.queryItemValue("maxResults").toInt();
+            QJsonArray page;
+            for (const QString &id : hits.mid(offset, max))
+                page.append(QJsonObject{{"id", id}, {"threadId", id}});
+            QJsonObject r{{"messages", page}, {"resultSizeEstimate", int(hits.size())}};
+            if (offset + max < hits.size())
+                r.insert("nextPageToken", QString::number(offset + max));
+            return r;
+        }
+        if (method == "POST" && path == "messages/batchModify") {
+            const QJsonObject b = QJsonDocument::fromJson(body).object();
+            Batch batch{int(b.value("ids").toArray().size()), {}, {}};
+            for (const QJsonValue &v : b.value("addLabelIds").toArray())
+                batch.add << v.toString();
+            for (const QJsonValue &v : b.value("removeLabelIds").toArray())
+                batch.remove << v.toString();
+            for (const QJsonValue &v : b.value("ids").toArray()) {
+                QSet<QString> &l = messages[v.toString()];
+                for (const QString &x : batch.remove)
+                    l.remove(x);
+                for (const QString &x : batch.add)
+                    l.insert(x);
+            }
+            batches << batch;
+            return {};
+        }
+        if (method == "GET" && path.startsWith("messages/")) {
+            const QString id = path.section('/', 1, 1);
+            QJsonArray labels;
+            for (const QString &l : messages.value(id))
+                labels.append(l);
+            return {{"id", id}, {"threadId", id}, {"labelIds", labels}, {"snippet", "Aperçu"},
+                    {"internalDate", "1758800000000"},
+                    {"payload", QJsonObject{{"headers", QJsonArray{
+                        QJsonObject{{"name", "From"}, {"value", "Test <t@x.fr>"}},
+                        QJsonObject{{"name", "Subject"}, {"value", "Sujet " + id}}}}}}};
+        }
+        if (method == "GET" && path.startsWith("labels/")) {
+            const QString id = path.section('/', 1, 1);
+            return {{"id", id}, {"messagesUnread", count({id, "UNREAD"})}, {"messagesTotal", count({id})}};
+        }
+        if (path == "labels")
+            return {{"labels", QJsonArray{}}};
+        return {{"emailAddress", "test@exemple.fr"}};
+    }
+
+    void handle(QTcpSocket *s)
+    {
+        QByteArray buf = s->property("buf").toByteArray() + s->readAll();
+        const int headerEnd = buf.indexOf("\r\n\r\n");
+        if (headerEnd < 0) {
+            s->setProperty("buf", buf);
+            return;
+        }
+        const QByteArray head = buf.left(headerEnd);
+        int length = 0;
+        for (const QByteArray &line : head.split('\n'))
+            if (line.toLower().startsWith("content-length:"))
+                length = line.mid(15).trimmed().toInt();
+        if (buf.size() < headerEnd + 4 + length) {
+            s->setProperty("buf", buf);
+            return;
+        }
+        s->setProperty("buf", QByteArray());
+        const QList<QByteArray> requestLine = head.left(head.indexOf("\r\n")).split(' ');
+        const QUrl url("http://x" + QString::fromLatin1(requestLine.value(1)));
+        const QByteArray out = QJsonDocument(route(requestLine.value(0), url.path().section("/users/me/", 1),
+                                                   QUrlQuery(url), buf.mid(headerEnd + 4, length)))
+                                   .toJson(QJsonDocument::Compact);
+        s->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                 + QByteArray::number(out.size()) + "\r\n\r\n" + out);
+        s->disconnectFromHost();
+    }
+};
 
 class Tests : public QObject
 {
@@ -757,6 +896,117 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         win.restoreStartFolder();
         win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
         QCOMPARE(folders->currentItem()->data(0, FolderRoles::Id).toString(), QString("STARRED"));
+    }
+    void folderContextMenu()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 60; ++i)
+            gmail.add(QString("i%1").arg(i), {"INBOX", "CATEGORY_PERSONAL"});
+        for (int i = 0; i < 1200; ++i) {
+            QSet<QString> l{"INBOX", "CATEGORY_PROMOTIONS"};
+            if (i < 700)
+                l.insert("UNREAD");
+            gmail.add(QString("p%1").arg(i), l);
+        }
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+
+        MainWindow win;
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        auto actions = [&](const QString &id) {
+            QMenu *menu = win.folderMenu(id);
+            QHash<QString, QAction *> h;
+            for (QAction *a : menu->actions())
+                if (!a->objectName().isEmpty())
+                    h.insert(a->objectName(), a);
+            menu->deleteLater();
+            return h;
+        };
+        auto idle = [&] { return actions("INBOX").value("markRead")->isEnabled(); };
+
+        // Contenu du menu selon la boîte
+        QVERIFY(actions("TRASH").contains("emptyTrashWeb"));
+        QVERIFY(!actions("TRASH").contains("empty"));
+        QVERIFY(!actions("").value("empty")->isEnabled());           // « Tous les messages »
+        QVERIFY(!actions("DRAFT").value("markRead")->isEnabled());   // brouillons
+        QVERIFY(actions("CATEGORY_PROMOTIONS").value("empty")->isEnabled());
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty()) {
+            QMenu *menu = win.folderMenu("CATEGORY_PROMOTIONS");
+            menu->popup(QPoint(0, 0));
+            QTest::qWait(100);
+            menu->grab().save(out + "/folder-menu.png");
+            menu->close();
+        }
+
+        // Tout marquer comme lu : seuls les 700 non-lus, en un appel
+        actions("CATEGORY_PROMOTIONS").value("markRead")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(idle(), 15000);
+        QCOMPARE(gmail.count({"CATEGORY_PROMOTIONS", "UNREAD"}), 0);
+        QCOMPARE(gmail.batches.size(), 1);
+        QCOMPARE(gmail.batches[0].count, 700);
+        QCOMPARE(gmail.batches[0].remove, QStringList{"UNREAD"});
+        QCOMPARE(gmail.count({"CATEGORY_PERSONAL", "UNREAD"}), 0); // autres boîtes intactes
+
+        // Tout marquer comme non lu : 1 200 messages → paquets de 1 000 + 200
+        gmail.batches.clear();
+        actions("CATEGORY_PROMOTIONS").value("markUnread")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(idle(), 15000);
+        QCOMPARE(gmail.count({"CATEGORY_PROMOTIONS", "UNREAD"}), 1200);
+        QCOMPARE(gmail.batches.size(), 2);
+        QCOMPARE(gmail.batches[0].count, 1000);
+        QCOMPARE(gmail.batches[1].count, 200);
+        QCOMPARE(gmail.batches[0].add, QStringList{"UNREAD"});
+
+        // Vider : confirmation annulée → rien ne bouge
+        QString dialogText;
+        // Répond automatiquement à la boîte de confirmation dès qu'elle s'ouvre
+        auto answer = [&](QMessageBox::StandardButton button) {
+            auto *timer = new QTimer(this);
+            connect(timer, &QTimer::timeout, this, [&, timer, button] {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    dialogText = box->text();
+                    box->button(button)->click();
+                    timer->deleteLater();
+                }
+            });
+            timer->start(20);
+        };
+        gmail.batches.clear();
+        answer(QMessageBox::Cancel);
+        actions("CATEGORY_PROMOTIONS").value("empty")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!dialogText.isEmpty() && idle(), 15000);
+        QVERIFY2(QString(dialogText).remove(QRegularExpression("\\D")).startsWith("1200"), qPrintable(dialogText));
+        QVERIFY(dialogText.contains("Promotions"));
+        QCOMPARE(gmail.batches.size(), 0);
+        QCOMPARE(gmail.count({"TRASH"}), 0);
+
+        // Vider, confirmé : les 1 200 promotions partent à la corbeille, le reste de la réception non
+        dialogText.clear();
+        answer(QMessageBox::Yes);
+        actions("CATEGORY_PROMOTIONS").value("empty")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!dialogText.isEmpty() && idle(), 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.count({"TRASH"}), 1200, 15000);
+        QCOMPARE(gmail.count({"CATEGORY_PROMOTIONS", "TRASH"}), 1200);
+        QCOMPARE(gmail.count({"CATEGORY_PERSONAL", "TRASH"}), 0);
+        QCOMPARE(gmail.batches.size(), 2);
+        QCOMPARE(gmail.batches[0].add, QStringList{"TRASH"});
+
+        // Sélectionner tous les messages : la réception (60 messages hors corbeille) se charge puis tout est sélectionné
+        auto *list = [&]() -> QTreeWidget * {
+            for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+                if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                    return t;
+            return nullptr;
+        }();
+        QVERIFY(list);
+        actions("INBOX").value("selectAll")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(list->selectedItems().size(), 50, 15000); // première page de 50
+        QCOMPARE(list->topLevelItemCount(), 50);
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
     }
 };
 
