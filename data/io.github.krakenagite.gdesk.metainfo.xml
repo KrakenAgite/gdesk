@@ -48,6 +48,11 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.1.1" date="2026-09-25">
+      <description>
+        <p>Fix: the "preview on the right" layout stayed below the list for users upgrading from 2.0.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-09-25">
       <description>
         <p>New settings window: light/dark theme, list density, preview on the right or below, message text size, sender name, signature, check interval, read marking and privacy options.</p>

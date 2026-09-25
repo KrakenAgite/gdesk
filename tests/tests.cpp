@@ -1,5 +1,6 @@
 // Tests sans compte Google : MIME, connexion OAuth (jusqu'au serveur de Google) et visionneuse.
 #include "googleauth.h"
+#include "mainwindow.h"
 #include "messageview.h"
 #include "mime.h"
 #include "settingsdialog.h"
@@ -10,6 +11,8 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QListWidget>
+#include <QSplitter>
+#include <QStackedWidget>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QNetworkAccessManager>
@@ -281,6 +284,60 @@ private slots:
         QCOMPARE(settings.value("layout").toString(), QString("right"));
         QCOMPARE(settings.value("trusted_senders").toStringList(), QStringList{"news@exemple.fr"});
         Theme::apply("system");
+    }
+    // Régression : la clé « splitter_right » de la 2.0 (séparateur vertical) empêchait l'aperçu à droite
+    void previewLayoutFromOldConfig()
+    {
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        {
+            QSplitter old(Qt::Vertical);
+            old.addWidget(new QWidget);
+            old.addWidget(new QWidget);
+            old.setSizes({192, 288});
+            QSettings s("gdesk", "gdesk");
+            s.setValue("splitter_right", old.saveState()); // état laissé par la 2.0
+            s.setValue("layout", "right");
+            s.setValue("close_to_tray", false);
+        }
+
+        MainWindow win;
+        win.resize(1200, 800);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1); // page des mails, comme connecté
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        auto *view = win.findChild<MessageView *>();
+        QVERIFY(view);
+        auto *splitter = qobject_cast<QSplitter *>(view->parentWidget());
+        QVERIFY(splitter);
+        auto *list = splitter->widget(0);
+
+        auto check = [&](Qt::Orientation expected) {
+            QCOMPARE(splitter->orientation(), expected);
+            const QRect l = list->geometry(), v = view->geometry();
+            if (expected == Qt::Horizontal) { // côte à côte, même hauteur
+                QVERIFY2(v.left() >= l.right(), "l'aperçu doit être à droite de la liste");
+                QCOMPARE(v.height(), l.height());
+            } else {                           // l'un sous l'autre, même largeur
+                QVERIFY2(v.top() >= l.bottom(), "l'aperçu doit être sous la liste");
+                QCOMPARE(v.width(), l.width());
+            }
+            QVERIFY2(l.width() > 100 && l.height() > 100 && v.width() > 100 && v.height() > 100,
+                     qPrintable(QString("liste %1x%2, aperçu %3x%4").arg(l.width()).arg(l.height())
+                                    .arg(v.width()).arg(v.height())));
+        };
+        check(Qt::Horizontal);
+
+        QSettings s("gdesk", "gdesk");
+        QVERIFY(!s.contains("splitter_right"));
+        for (const auto &[layout, orientation] : {std::pair{"below", Qt::Vertical}, std::pair{"right", Qt::Horizontal},
+                                                  std::pair{"below", Qt::Vertical}}) {
+            s.setValue("layout", layout);
+            win.applySettings();
+            QTest::qWait(50);
+            check(orientation);
+        }
+        win.close();
     }
 };
 

@@ -458,10 +458,17 @@ void MainWindow::openSettings()
     dlg->open();
 }
 
+// Dimensions de la liste et de l'aperçu, mémorisées séparément pour chaque disposition.
+// (La 2.0 utilisait déjà la clé « splitter_right » pour tout autre chose : d'où le préfixe distinct.)
+static QString previewSplitterKey(const QString &layout)
+{
+    return "preview_splitter_" + layout;
+}
+
 void MainWindow::saveSplitters()
 {
     m_settings.setValue("splitter", m_splitter->saveState());
-    m_settings.setValue("splitter_" + m_layout, m_rightSplitter->saveState());
+    m_settings.setValue(previewSplitterKey(m_layout), m_rightSplitter->saveState());
 }
 
 void MainWindow::applySettings()
@@ -485,12 +492,18 @@ void MainWindow::applySettings()
     const QString layout = m_settings.value("layout", "below").toString();
     if (layout != m_layout || m_rightSplitter->property("initialized").isNull()) {
         if (!m_rightSplitter->property("initialized").isNull())
-            m_settings.setValue("splitter_" + m_layout, m_rightSplitter->saveState());
+            m_settings.setValue(previewSplitterKey(m_layout), m_rightSplitter->saveState());
+        m_settings.remove("splitter_right"); // ancienne clé de la 2.0
+        m_settings.remove("splitter_below");  // ancienne clé de la 2.1.0
         m_layout = layout;
-        m_rightSplitter->setOrientation(layout == "right" ? Qt::Horizontal : Qt::Vertical);
-        const QByteArray state = m_settings.value("splitter_" + layout).toByteArray();
-        if (state.isEmpty() || !m_rightSplitter->restoreState(state)) {
-            const int total = layout == "right" ? m_rightSplitter->width() : m_rightSplitter->height();
+        const Qt::Orientation orientation = layout == "right" ? Qt::Horizontal : Qt::Vertical;
+        const QByteArray state = m_settings.value(previewSplitterKey(layout)).toByteArray();
+        // Un état enregistré contient aussi l'orientation : on ne le garde que s'il correspond
+        const bool restored = !state.isEmpty() && m_rightSplitter->restoreState(state)
+                              && m_rightSplitter->orientation() == orientation;
+        m_rightSplitter->setOrientation(orientation);
+        if (!restored) {
+            const int total = orientation == Qt::Horizontal ? m_rightSplitter->width() : m_rightSplitter->height();
             if (total > 0) // sinon (fenêtre pas encore affichée) : répartition par défaut 2/5 – 3/5
                 m_rightSplitter->setSizes({total * 2 / 5, total * 3 / 5});
         }

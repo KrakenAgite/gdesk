@@ -34,6 +34,7 @@ public:
     void composeMailto(const QUrl &mailto);
     void bringToFront();
     bool hasTray() const { return m_tray != nullptr; }
+    void applySettings(); // relit les réglages et les applique à la fenêtre
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -47,7 +48,6 @@ private:
     void setupTray();
     void updateActions();
     void openSettings();
-    void applySettings();
     void saveSplitters();
 
     // Connexion
