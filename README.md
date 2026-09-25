@@ -2,7 +2,7 @@
 
 Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle Gmail**.
 
-**Site et téléchargement : <https://krakenagite.github.io/gdesk/>** · [Politique de confidentialité](https://krakenagite.github.io/gdesk/confidentialite.html) · [Mentions légales](https://krakenagite.github.io/gdesk/mentions-legales.html)
+**Site et téléchargement : <https://krakenagite.github.io/gdesk/>** · [Politique de confidentialité](https://krakenagite.github.io/gdesk/confidentialite.html) · [Conditions d'utilisation](https://krakenagite.github.io/gdesk/conditions-utilisation.html) · [Mentions légales](https://krakenagite.github.io/gdesk/mentions-legales.html)
 
 - Dossiers, catégories et libellés Gmail avec compteurs de non-lus
 - Lecture des messages HTML dans un bac à sable : pas de JavaScript, images distantes
