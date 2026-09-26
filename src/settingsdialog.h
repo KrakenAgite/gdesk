@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QDialog>
 #include <QList>
+#include <functional>
 
 class QButtonGroup;
 class QCheckBox;
@@ -11,6 +12,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
+class QPushButton;
 class QSettings;
 class QSlider;
 class QTreeWidget;
@@ -62,23 +64,32 @@ private:
     QWidget *accountPage(const QString &email);
     QWidget *generalPage();
     QWidget *privacyPage();
+    QTreeWidget *folderTree();
     QButtonGroup *addCards(QLayout *layout, PreviewCard::Kind kind, const QList<QPair<QString, QString>> &options);
     void load();
     void save();
     void writeAutostart(bool enabled, bool minimized);
+    QByteArray snapshot() const;
+    void updateApplyButton();
 
     QSettings &m_settings;
     QButtonGroup *m_theme, *m_density, *m_layout;
     QCheckBox *m_darkMessages, *m_showSnippet;
     QSlider *m_zoom;
+    QComboBox *m_dateStyle, *m_dateSize, *m_fullDateStyle;
+    QCheckBox *m_dateAlwaysTime;
+    QLabel *m_datePreview;
+    std::function<void()> m_updateDatePreview;
     QLabel *m_zoomLabel;
     QLineEdit *m_senderName;
     QPlainTextEdit *m_signature;
     QCheckBox *m_closeToTray, *m_autostart, *m_startMinimized, *m_notifications;
     QComboBox *m_poll, *m_markRead, *m_remoteImages, *m_startFolder;
-    QTreeWidget *m_notifyTree;
+    QTreeWidget *m_notifyTree, *m_badgeTree;
     QList<LabelChoice> m_labels;
     QListWidget *m_trusted;
     QLabel *m_addressCount;
     bool m_clearAddresses = false;
+    QPushButton *m_apply;
+    QByteArray m_saved; // état enregistré (à l'ouverture ou au dernier « Appliquer »)
 };

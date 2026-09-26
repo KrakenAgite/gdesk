@@ -243,7 +243,7 @@ void Composer::prepare(Mode mode, const MailMessage &o)
     }
     m_threadId = mode == Forward ? QString() : o.threadId;
     const QString original = o.text.isEmpty() ? Mime::htmlToText(o.html) : o.text;
-    const QString when = Mime::longDate(o.date);
+    const QString when = Mime::longDate(o.date, "long"); // lu par les destinataires : toujours complet
 
     if (mode == Reply || mode == ReplyAll) {
         m_inReplyTo = o.messageId;

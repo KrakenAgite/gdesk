@@ -9,6 +9,7 @@
 #include "setupdialog.h"
 #include "sidebar.h"
 #include "theme.h"
+#include "unsubscribe.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -155,8 +156,13 @@ void MainWindow::buildActions()
         reloadList(m_openId);
     });
 
+    m_actUnsubscribe = new QAction(QIcon::fromTheme("news-unsubscribe", QIcon::fromTheme("list-remove")),
+                                   "Se désabonner…", this);
+    m_actUnsubscribe->setToolTip("Se désabonner des newsletters et listes de diffusion");
+    connect(m_actUnsubscribe, &QAction::triggered, this, &MainWindow::openUnsubscribe);
+
     m_mailOnlyActions = {m_actReply, m_actReplyAll, m_actForward, m_actArchive, m_actDelete, m_actRestore,
-                         m_actSpam, m_actRead, m_actStar, m_actRefresh};
+                         m_actSpam, m_actRead, m_actStar, m_actRefresh, m_actUnsubscribe};
 
     auto *settings = new QAction(QIcon::fromTheme("configure"), "Paramètres…", this);
     settings->setShortcut(QKeySequence("Ctrl+,"));
@@ -318,6 +324,7 @@ QWidget *MainWindow::buildMailPage()
             w->setToolButtonStyle(Qt::ToolButtonIconOnly);
     bar->addSeparator();
     bar->addAction(m_actRefresh);
+    bar->addAction(m_actUnsubscribe);
     auto *spacer = new QWidget;
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(spacer);
@@ -616,6 +623,14 @@ void MainWindow::applySettings()
     const QString density = m_settings.value("density", "comfortable").toString();
     m_listDelegate->density = density;
     m_listDelegate->showSnippet = m_settings.value("show_snippet", true).toBool();
+    // Dates : représentation et taille
+    Mime::setDateStyles(m_settings.value("date_style", "short").toString(),
+                        m_settings.value("full_date_style", "long").toString(),
+                        m_settings.value("date_always_time", false).toBool());
+    const QString dateSize = m_settings.value("date_size", "normal").toString();
+    m_listDelegate->dateSizeDelta = dateSize == "small" ? -1 : dateSize == "large" ? 1.5 : 0;
+    if (!m_view->message().id.isEmpty())
+        m_view->refreshDate();
     m_list->setUniformRowHeights(false); // force le recalcul de la hauteur des cartes
     m_list->setUniformRowHeights(true);
     m_list->doItemsLayout();
@@ -649,6 +664,12 @@ void MainWindow::applySettings()
     m_pollTimer->setInterval(m_settings.value("poll_minutes", 1).toInt() * 60 * 1000);
     m_markReadMode = m_settings.value("mark_read", "immediate").toString();
     m_remoteMode = m_settings.value("remote_images", "ask").toString();
+    const QStringList badgeFolders = m_settings.value("badge_folders", QStringList{"INBOX"}).toStringList();
+    if (badgeFolders != m_badgeFolders) {
+        m_badgeFolders = badgeFolders;
+        if (!m_email.isEmpty())
+            refreshCounts(QStringList{"INBOX"});
+    }
     const QStringList notifyFolders = m_settings.value("notify_folders", QStringList{"INBOX"}).toStringList();
     if (notifyFolders != m_notifyFolders) {
         // Nouvelles boîtes surveillées : la prochaine relève mémorise leurs non-lus sans notifier
@@ -871,8 +892,71 @@ void MainWindow::scheduleCountsRefresh()
     m_countsTimer->start();
 }
 
+QString MainWindow::badgeQuery(const QStringList &folders, const QMap<QString, QString> &labelNames)
+{
+    static const QMap<QString, QString> known{
+        {"INBOX", "in:inbox"},
+        {"CATEGORY_PERSONAL", "(in:inbox category:primary)"},
+        {"CATEGORY_SOCIAL", "(in:inbox category:social)"},
+        {"CATEGORY_PROMOTIONS", "(in:inbox category:promotions)"},
+        {"CATEGORY_UPDATES", "(in:inbox category:updates)"},
+        {"CATEGORY_FORUMS", "(in:inbox category:forums)"},
+        {"IMPORTANT", "is:important"},
+        {"STARRED", "is:starred"}};
+    QStringList parts;
+    for (const QString &id : folders) {
+        if (known.contains(id))
+            parts << known.value(id);
+        else if (labelNames.contains(id)) // libellé : « Travail/Projets X » → label:"Travail-Projets-X"
+            parts << QString("label:\"%1\"").arg(QString(labelNames.value(id)).replace('/', '-').replace(' ', '-'));
+    }
+    if (parts.isEmpty())
+        return {};
+    return QString("is:unread (%1)").arg(parts.join(" OR "));
+}
+
+// Pastille : non-lus des boîtes choisies, chaque message compté une fois
+void MainWindow::refreshBadge()
+{
+    if (m_badgeFolders.isEmpty()) {
+        setUnread(0);
+        return;
+    }
+    if (m_badgeFolders == QStringList{"INBOX"})
+        return; // donné par refreshCounts
+    QMap<QString, QString> names;
+    for (auto it = m_folderItems.cbegin(); it != m_folderItems.cend(); ++it)
+        names.insert(it.key(), it.value()->data(0, FolderRoles::Name).toString());
+    const QString query = badgeQuery(m_badgeFolders, names);
+    if (query.isEmpty()) {
+        setUnread(0);
+        return;
+    }
+    const int generation = ++m_badgeGeneration;
+    auto count = std::make_shared<int>(0);
+    auto page = std::make_shared<std::function<void(const QString &)>>();
+    *page = [this, query, generation, count, page](const QString &token) {
+        m_api->listMessages({}, query, token, 500, [this, generation, count, page](const QJsonObject &r, const QString &err) {
+            if (generation != m_badgeGeneration || !err.isEmpty()) {
+                *page = nullptr; // rompt le cycle de références
+                return;
+            }
+            *count += int(r.value("messages").toArray().size());
+            const QString next = r.value("nextPageToken").toString();
+            if (!next.isEmpty() && *count < 2000) {
+                (*page)(next);
+                return;
+            }
+            setUnread(*count);
+            *page = nullptr;
+        });
+    };
+    (*page)({});
+}
+
 void MainWindow::refreshCounts(const QStringList &only)
 {
+    refreshBadge();
     for (auto it = m_folderItems.cbegin(); it != m_folderItems.cend(); ++it) {
         const QString id = it.key();
         if (id.isEmpty() || id == "SENT" || id == "TRASH" || id == "STARRED" || id == "IMPORTANT")
@@ -885,8 +969,8 @@ void MainWindow::refreshCounts(const QStringList &only)
                 return;
             const int count = (id == "DRAFT" ? l.value("messagesTotal") : l.value("messagesUnread")).toInt();
             item->setData(0, FolderRoles::Count, count);
-            if (id == "INBOX")
-                setUnread(count);
+            if (id == "INBOX" && m_badgeFolders == QStringList{"INBOX"})
+                setUnread(count); // cas courant : le compteur de la réception suffit
         });
     }
 }
@@ -1031,7 +1115,7 @@ void MainWindow::fillRow(QTreeWidgetItem *item, const MailMessage &m)
     const QString subject = m.subject.isEmpty() ? QString("(sans objet)") : m.subject;
     item->setData(0, MailRoles::Labels, m.labelIds);
     item->setData(0, MailRoles::Who, who);
-    item->setData(0, MailRoles::Date, Mime::shortDate(m.date));
+    item->setData(0, MailRoles::Date, m.date); // formatée au dessin, selon le style choisi
     item->setData(0, MailRoles::Snippet, m.snippet);
     item->setData(0, MailRoles::Subject, subject);
     item->setToolTip(0, QString("<b>%1</b><br>%2<br><i>%3</i>")
@@ -1263,6 +1347,14 @@ void MainWindow::saveAttachmentToDrive(int index)
                                              .arg(name).arg(done * 100 / total));
             });
     });
+}
+
+void MainWindow::openUnsubscribe()
+{
+    if (m_email.isEmpty())
+        return;
+    UnsubscribeDialog dlg(m_api, m_email, this);
+    dlg.exec();
 }
 
 void MainWindow::composeWithDriveFiles(const QList<DriveFile> &files)

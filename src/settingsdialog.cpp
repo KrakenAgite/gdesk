@@ -1,10 +1,12 @@
 #include "settingsdialog.h"
+#include "mime.h"
 #include "sidebar.h"
 #include "theme.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDataStream>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -239,7 +241,12 @@ SettingsDialog::SettingsDialog(QSettings &settings, const QString &email, const 
         accept();
     });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &SettingsDialog::save);
+    m_apply = buttons->button(QDialogButtonBox::Apply);
+    connect(m_apply, &QPushButton::clicked, this, [this] {
+        save();
+        m_saved = snapshot();
+        updateApplyButton();
+    });
 
     auto *top = new QHBoxLayout;
     top->addWidget(nav);
@@ -249,6 +256,45 @@ SettingsDialog::SettingsDialog(QSettings &settings, const QString &email, const 
     v->addWidget(buttons);
 
     load();
+    // « Appliquer » n'est actif que si un réglage diffère de ce qui est enregistré
+    m_saved = snapshot();
+    for (QCheckBox *c : findChildren<QCheckBox *>())
+        connect(c, &QCheckBox::toggled, this, &SettingsDialog::updateApplyButton);
+    for (QComboBox *c : findChildren<QComboBox *>())
+        connect(c, &QComboBox::currentIndexChanged, this, &SettingsDialog::updateApplyButton);
+    for (QButtonGroup *g : {m_theme, m_density, m_layout})
+        connect(g, &QButtonGroup::buttonToggled, this, &SettingsDialog::updateApplyButton);
+    connect(m_zoom, &QSlider::valueChanged, this, &SettingsDialog::updateApplyButton);
+    connect(m_senderName, &QLineEdit::textChanged, this, &SettingsDialog::updateApplyButton);
+    connect(m_signature, &QPlainTextEdit::textChanged, this, &SettingsDialog::updateApplyButton);
+    for (QTreeWidget *t : {m_notifyTree, m_badgeTree})
+        connect(t, &QTreeWidget::itemChanged, this, &SettingsDialog::updateApplyButton);
+    updateApplyButton();
+}
+
+// État de tous les réglages affichés, pour savoir s'il y a quelque chose à appliquer
+QByteArray SettingsDialog::snapshot() const
+{
+    QByteArray state;
+    QDataStream out(&state, QIODevice::WriteOnly);
+    for (QCheckBox *c : findChildren<QCheckBox *>())
+        out << c->isChecked();
+    for (QComboBox *c : findChildren<QComboBox *>())
+        out << c->currentIndex();
+    for (QButtonGroup *g : {m_theme, m_density, m_layout})
+        out << (g->checkedButton() ? static_cast<PreviewCard *>(g->checkedButton())->value() : QString());
+    out << m_zoom->value() << m_senderName->text() << m_signature->toPlainText() << m_clearAddresses;
+    for (QTreeWidget *t : {m_notifyTree, m_badgeTree})
+        for (QTreeWidgetItemIterator it(t); *it; ++it)
+            out << int((*it)->checkState(0));
+    for (int i = 0; i < m_trusted->count(); ++i)
+        out << m_trusted->item(i)->text();
+    return state;
+}
+
+void SettingsDialog::updateApplyButton()
+{
+    m_apply->setEnabled(snapshot() != m_saved);
 }
 
 QButtonGroup *SettingsDialog::addCards(QLayout *layout, PreviewCard::Kind kind,
@@ -299,6 +345,49 @@ QWidget *SettingsDialog::displayPage()
     dv->addWidget(hint("Compacte : nom et date, puis objet (suivi du début du message si la ligne le permet). "
                        "Aérée : une ligne de début de message sous l'objet. Espacée : jusqu'à deux lignes."));
     v->addWidget(densityBox);
+
+    auto *dateBox = new QGroupBox("Dates");
+    auto *df = new QFormLayout(dateBox);
+    m_dateStyle = new QComboBox;
+    m_dateStyle->addItem("Courte", "short");
+    m_dateStyle->addItem("Numérique", "numeric");
+    m_dateStyle->addItem("Semi-courte (jours et mois abrégés)", "medium");
+    m_dateStyle->addItem("Longue (en toutes lettres)", "long");
+    m_dateStyle->addItem("Relative (« il y a 3 h »)", "relative");
+    m_dateAlwaysTime = new QCheckBox("Toujours afficher l'heure");
+    m_dateSize = new QComboBox;
+    m_dateSize->addItem("Petite", "small");
+    m_dateSize->addItem("Normale", "normal");
+    m_dateSize->addItem("Grande", "large");
+    m_datePreview = new QLabel;
+    m_datePreview->setTextFormat(Qt::RichText);
+    m_fullDateStyle = new QComboBox;
+    const QDateTime sample = QDateTime::currentDateTime();
+    for (const auto &[value, name] : QList<QPair<QString, QString>>{
+             {"long", "Complète"}, {"abbreviated", "Abrégée"}, {"numeric", "Numérique"}})
+        m_fullDateStyle->addItem(QString("%1 — %2").arg(name, Mime::longDate(sample, value)), value);
+    df->addRow("Dans la liste :", m_dateStyle);
+    df->addRow("", m_dateAlwaysTime);
+    df->addRow("Taille :", m_dateSize);
+    df->addRow("Aperçu :", m_datePreview);
+    df->addRow("Message ouvert :", m_fullDateStyle);
+    df->addRow(hint("Les réponses et transferts citent toujours la date en toutes lettres, lisible par vos destinataires."));
+    auto updatePreview = [this] {
+        const QDateTime now = QDateTime::currentDateTime();
+        const QString style = m_dateStyle->currentData().toString();
+        QStringList samples;
+        for (const QDateTime &d : {now.addSecs(-2 * 3600), now.addDays(-1), now.addDays(-3), now.addDays(-24),
+                                   now.addYears(-1).addDays(-40)})
+            samples << Mime::shortDate(d, style, m_dateAlwaysTime->isChecked(), now).toHtmlEscaped();
+        const QString size = m_dateSize->currentData().toString();
+        const int pt = qRound(font().pointSizeF() * 0.9 + (size == "small" ? -1 : size == "large" ? 1.5 : 0));
+        m_datePreview->setText(QString("<span style='font-size:%1pt'>%2</span>").arg(pt).arg(samples.join(" · ")));
+    };
+    connect(m_dateStyle, &QComboBox::currentIndexChanged, this, updatePreview);
+    connect(m_dateSize, &QComboBox::currentIndexChanged, this, updatePreview);
+    connect(m_dateAlwaysTime, &QCheckBox::toggled, this, updatePreview);
+    m_updateDatePreview = updatePreview;
+    v->addWidget(dateBox);
 
     auto *layoutBox = new QGroupBox("Disposition de la liste et de l'aperçu");
     auto *lv = new QVBoxLayout(layoutBox);
@@ -438,47 +527,23 @@ QWidget *SettingsDialog::generalPage()
     notifRow->addWidget(test);
     form->addRow(notifRow);
 
-    // Boîtes surveillées : la boîte de réception regroupe ses catégories
-    m_notifyTree = new QTreeWidget;
-    m_notifyTree->setHeaderHidden(true);
-    m_notifyTree->setIconSize(QSize(16, 16));
-    m_notifyTree->setRootIsDecorated(true);
-    m_notifyTree->setMinimumHeight(200);
-    auto addBox = [&](QTreeWidgetItem *parent, const QString &id, const QString &name, const char *icon,
-                      const QColor &color) {
-        auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_notifyTree);
-        item->setText(0, name);
-        item->setIcon(0, tinted(icon, color));
-        item->setData(0, Qt::UserRole, id);
-        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-        item->setCheckState(0, Qt::Unchecked);
-        return item;
-    };
-    QTreeWidgetItem *inbox = nullptr;
-    for (const SectionDef &section : sidebarSections())
-        for (const FolderDef &f : section.folders) {
-            const QString id = f.id;
-            if (id == "INBOX") {
-                inbox = addBox(nullptr, id, QString("%1 (toutes les catégories)").arg(f.name), f.icon, QColor(f.color));
-                inbox->setFlags(inbox->flags() | Qt::ItemIsAutoTristate);
-            } else if (id.startsWith("CATEGORY_") && inbox) {
-                addBox(inbox, id, f.name, f.icon, QColor(f.color));
-            } else if (id == "IMPORTANT" || id == "STARRED") {
-                addBox(nullptr, id, f.name, f.icon, QColor(f.color));
-            }
-        }
-    if (!m_labels.isEmpty()) {
-        auto *labelsRoot = addBox(nullptr, "__labels__", "Libellés", "label", {});
-        labelsRoot->setFlags(labelsRoot->flags() | Qt::ItemIsAutoTristate);
-        for (const LabelChoice &l : std::as_const(m_labels))
-            addBox(labelsRoot, l.id, l.name, "label", l.color);
-    }
-    m_notifyTree->expandAll();
+    m_notifyTree = folderTree();
     connect(m_notifications, &QCheckBox::toggled, m_notifyTree, &QWidget::setEnabled);
     form->addRow("Me prévenir pour :", m_notifyTree);
     form->addRow(hint("Cochez la boîte de réception pour tout recevoir, ou seulement certaines catégories "
                       "(par exemple Principale sans Promotions)."));
     v->addWidget(mailBox);
+
+    auto *badgeBox = new QGroupBox("Pastille de non-lus");
+    auto *bf = new QFormLayout(badgeBox);
+    m_badgeTree = folderTree();
+    m_badgeTree->setObjectName("badgeTree");
+    bf->addRow("Compter les non-lus de :", m_badgeTree);
+    bf->addRow(hint("Le point rouge sur l'icône de G-Desk (barre des tâches, gestionnaire de tâches et barre "
+                    "système) et le titre de la fenêtre indiquent le nombre de messages non lus dans ces boîtes. "
+                    "Un message présent dans plusieurs boîtes n'est compté qu'une fois. Ne cochez rien pour "
+                    "ne jamais afficher de pastille."));
+    v->addWidget(badgeBox);
 
     auto *readBox = new QGroupBox("Lecture");
     auto *rf = new QFormLayout(readBox);
@@ -516,7 +581,10 @@ QWidget *SettingsDialog::privacyPage()
     auto *tRow = new QHBoxLayout;
     auto *removeBtn = new QPushButton(QIcon::fromTheme("list-remove"), "Retirer");
     auto *clearBtn = new QPushButton(QIcon::fromTheme("edit-clear-all"), "Tout retirer");
-    connect(removeBtn, &QPushButton::clicked, this, [this] { qDeleteAll(m_trusted->selectedItems()); });
+    connect(removeBtn, &QPushButton::clicked, this, [this] {
+        qDeleteAll(m_trusted->selectedItems());
+        updateApplyButton();
+    });
     connect(clearBtn, &QPushButton::clicked, m_trusted, &QListWidget::clear);
     tRow->addWidget(removeBtn);
     tRow->addWidget(clearBtn);
@@ -531,6 +599,7 @@ QWidget *SettingsDialog::privacyPage()
     connect(forget, &QPushButton::clicked, this, [this] {
         m_clearAddresses = true;
         m_addressCount->setText("Les adresses seront effacées à l'enregistrement.");
+        updateApplyButton();
     });
     ah->addWidget(m_addressCount, 1);
     ah->addWidget(forget);
@@ -571,6 +640,78 @@ QString SettingsDialog::autostartPath()
     return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/autostart/gdesk.desktop";
 }
 
+// Arbre des boîtes à cocher (notifications, pastille) : la boîte de réception regroupe ses catégories
+QTreeWidget *SettingsDialog::folderTree()
+{
+    auto *tree = new QTreeWidget;
+    tree->setHeaderHidden(true);
+    tree->setIconSize(QSize(16, 16));
+    tree->setRootIsDecorated(true);
+    tree->setMinimumHeight(200);
+    const QColor iconText = palette().color(QPalette::Text);
+    auto tinted = [&](const char *icon, const QColor &color) {
+        return QIcon(tintedIcon(folderIcon(icon), 16, color.isValid() ? color : iconText, devicePixelRatioF()));
+    };
+    auto addBox = [&](QTreeWidgetItem *parent, const QString &id, const QString &name, const char *icon,
+                      const QColor &color) {
+        auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree);
+        item->setText(0, name);
+        item->setIcon(0, tinted(icon, color));
+        item->setData(0, Qt::UserRole, id);
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, Qt::Unchecked);
+        return item;
+    };
+    QTreeWidgetItem *inbox = nullptr;
+    for (const SectionDef &section : sidebarSections())
+        for (const FolderDef &f : section.folders) {
+            const QString id = f.id;
+            if (id == "INBOX") {
+                inbox = addBox(nullptr, id, QString("%1 (toutes les catégories)").arg(f.name), f.icon, QColor(f.color));
+                inbox->setFlags(inbox->flags() | Qt::ItemIsAutoTristate);
+            } else if (id.startsWith("CATEGORY_") && inbox) {
+                addBox(inbox, id, f.name, f.icon, QColor(f.color));
+            } else if (id == "IMPORTANT" || id == "STARRED") {
+                addBox(nullptr, id, f.name, f.icon, QColor(f.color));
+            }
+        }
+    if (!m_labels.isEmpty()) {
+        auto *labelsRoot = addBox(nullptr, "__labels__", "Libellés", "label", {});
+        labelsRoot->setFlags(labelsRoot->flags() | Qt::ItemIsAutoTristate);
+        for (const LabelChoice &l : std::as_const(m_labels))
+            addBox(labelsRoot, l.id, l.name, "label", l.color);
+    }
+    tree->expandAll();
+    return tree;
+}
+
+static void checkFolders(QTreeWidget *tree, const QStringList &ids)
+{
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QString id = item->data(0, Qt::UserRole).toString();
+        if (id == "INBOX" && ids.contains("INBOX"))
+            item->setCheckState(0, Qt::Checked); // coche aussi toutes les catégories
+        else if (item->childCount() == 0 && ids.contains(id))
+            item->setCheckState(0, Qt::Checked);
+    }
+}
+
+static QStringList checkedFolders(QTreeWidget *tree)
+{
+    QStringList ids;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QString id = item->data(0, Qt::UserRole).toString();
+        const bool underCheckedInbox = item->parent() && item->parent()->data(0, Qt::UserRole) == "INBOX"
+                                       && item->parent()->checkState(0) == Qt::Checked;
+        if (id == "INBOX" ? item->checkState(0) == Qt::Checked
+                          : (item->childCount() == 0 && item->checkState(0) == Qt::Checked && !underCheckedInbox))
+            ids << id;
+    }
+    return ids;
+}
+
 void SettingsDialog::load()
 {
     checkValue(m_theme, m_settings.value("theme", "system").toString());
@@ -580,6 +721,11 @@ void SettingsDialog::load()
     checkValue(m_layout, m_settings.value("layout", "below").toString());
     m_zoom->setValue(qRound(m_settings.value("message_zoom", 100).toInt() / 10.0));
     m_zoomLabel->setText(QString("%1 %").arg(m_zoom->value() * 10));
+    selectData(m_dateStyle, m_settings.value("date_style", "short").toString());
+    m_dateAlwaysTime->setChecked(m_settings.value("date_always_time", false).toBool());
+    selectData(m_dateSize, m_settings.value("date_size", "normal").toString());
+    selectData(m_fullDateStyle, m_settings.value("full_date_style", "long").toString());
+    m_updateDatePreview();
 
     m_senderName->setText(m_settings.value("sender_name").toString());
     m_signature->setPlainText(m_settings.value("signature").toString());
@@ -594,15 +740,8 @@ void SettingsDialog::load()
     const int start = m_startFolder->findData(m_settings.value("start_folder", "INBOX").toString());
     m_startFolder->setCurrentIndex(start >= 0 ? start : m_startFolder->findData("INBOX"));
 
-    const QStringList notify = m_settings.value("notify_folders", QStringList{"INBOX"}).toStringList();
-    for (QTreeWidgetItemIterator it(m_notifyTree); *it; ++it) {
-        QTreeWidgetItem *item = *it;
-        const QString id = item->data(0, Qt::UserRole).toString();
-        if (id == "INBOX" && notify.contains("INBOX"))
-            item->setCheckState(0, Qt::Checked); // coche aussi toutes les catégories
-        else if (item->childCount() == 0 && notify.contains(id))
-            item->setCheckState(0, Qt::Checked);
-    }
+    checkFolders(m_notifyTree, m_settings.value("notify_folders", QStringList{"INBOX"}).toStringList());
+    checkFolders(m_badgeTree, m_settings.value("badge_folders", QStringList{"INBOX"}).toStringList());
     m_notifyTree->setEnabled(m_notifications->isChecked());
 
     selectData(m_remoteImages, m_settings.value("remote_images", "ask").toString());
@@ -620,6 +759,10 @@ void SettingsDialog::save()
     m_settings.setValue("show_snippet", m_showSnippet->isChecked());
     m_settings.setValue("layout", checkedValue(m_layout, "below"));
     m_settings.setValue("message_zoom", m_zoom->value() * 10);
+    m_settings.setValue("date_style", m_dateStyle->currentData().toString());
+    m_settings.setValue("date_always_time", m_dateAlwaysTime->isChecked());
+    m_settings.setValue("date_size", m_dateSize->currentData().toString());
+    m_settings.setValue("full_date_style", m_fullDateStyle->currentData().toString());
 
     m_settings.setValue("sender_name", m_senderName->text().trimmed());
     m_settings.setValue("signature", m_signature->toPlainText().trimmed());
@@ -632,17 +775,8 @@ void SettingsDialog::save()
     m_settings.setValue("mark_read", m_markRead->currentData().toString());
     m_settings.setValue("start_folder", m_startFolder->currentData().toString());
 
-    QStringList notify;
-    for (QTreeWidgetItemIterator it(m_notifyTree); *it; ++it) {
-        QTreeWidgetItem *item = *it;
-        const QString id = item->data(0, Qt::UserRole).toString();
-        const bool underCheckedInbox = item->parent() && item->parent()->data(0, Qt::UserRole) == "INBOX"
-                                       && item->parent()->checkState(0) == Qt::Checked;
-        if (id == "INBOX" ? item->checkState(0) == Qt::Checked
-                          : (item->childCount() == 0 && item->checkState(0) == Qt::Checked && !underCheckedInbox))
-            notify << id;
-    }
-    m_settings.setValue("notify_folders", notify);
+    m_settings.setValue("notify_folders", checkedFolders(m_notifyTree));
+    m_settings.setValue("badge_folders", checkedFolders(m_badgeTree));
 
     m_settings.setValue("remote_images", m_remoteImages->currentData().toString());
     QStringList trusted;

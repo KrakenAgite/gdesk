@@ -1,4 +1,5 @@
 #include "maillistdelegate.h"
+#include "mime.h"
 
 #include <QApplication>
 #include <QIcon>
@@ -209,8 +210,11 @@ void MailListDelegate::paint(QPainter *p, const QStyleOptionViewItem &option, co
     }
 
     // Ligne 1 : expéditeur en gras, date à droite
-    const QString date = index.data(MailRoles::Date).toString();
-    const QFont &dateFont = unread ? f.smallBold : small;
+    const QVariant rawDate = index.data(MailRoles::Date);
+    const QString date = rawDate.typeId() == QMetaType::QDateTime ? Mime::shortDate(rawDate.toDateTime()) : rawDate.toString();
+    QFont dateFont = unread ? f.smallBold : small;
+    if (dateSizeDelta != 0)
+        dateFont.setPointSizeF(qMax(6.0, dateFont.pointSizeF() + dateSizeDelta));
     const QFontMetrics fmDate(dateFont);
     const int dateWidth = fmDate.horizontalAdvance(date);
     const QRect line1(content.left(), content.top(), content.width(), fmBold.height());

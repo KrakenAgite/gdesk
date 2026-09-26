@@ -23,7 +23,7 @@
 
   <main class="wrap legal">
     <h1>Politique de confidentialité</h1>
-    <p class="updated">Dernière mise à jour : 25 septembre 2026 (version 2.4.0)</p>
+    <p class="updated">Dernière mise à jour : 25 septembre 2026 (version 2.5.0)</p>
 
     <p>Cette politique explique quelles données personnelles sont traitées lorsque vous utilisez le logiciel
       <strong>G-Desk</strong> et lorsque vous consultez son site web, et quels sont vos droits. Elle est établie
@@ -88,6 +88,8 @@
           <td>Dossier temporaire du système (<code>/tmp</code>)</td><td>Effacées au redémarrage de l'ordinateur</td></tr>
         <tr><td>Dernier dossier Google Drive choisi pour joindre ou enregistrer un fichier</td><td>Rouvrir le sélecteur au même endroit</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
+        <tr><td>Adresses des listes de diffusion dont vous vous êtes désabonné</td><td>Ne plus vous les proposer lors d'une nouvelle recherche</td>
+          <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Nom affiché et signature (facultatifs)</td><td>Les ajouter aux messages que vous envoyez</td>
           <td><code>~/.config/gdesk/gdesk.conf</code></td><td>Jusqu'à leur suppression par vous</td></tr>
         <tr><td>Préférences d'affichage</td><td>Retrouver la taille de fenêtre et vos réglages (thème, disposition, notifications…)</td>
@@ -103,6 +105,15 @@
       (souvent utilisés pour savoir si vous avez lu un e-mail) sont bloqués par défaut. Ils ne sont chargés que si
       vous cliquez sur « Afficher les images ». Dans ce cas, le serveur de l'expéditeur reçoit votre adresse IP,
       comme dans n'importe quel logiciel de messagerie.</p>
+
+    <h3>3.4 Désabonnement des listes de diffusion</h3>
+    <p>Lorsque vous demandez à vous désabonner d'une liste de diffusion, et seulement dans ce cas, G-Desk utilise le
+      moyen indiqué par l'expéditeur dans le message (en-tête <code>List-Unsubscribe</code>) : une requête envoyée
+      directement au serveur de l'expéditeur (désabonnement « en un clic », sans cookie ni autre donnée que l'adresse
+      fournie par l'expéditeur), un e-mail de désabonnement envoyé depuis votre compte Gmail, ou l'ouverture de sa
+      page de désabonnement dans votre navigateur. L'expéditeur apprend ainsi que vous souhaitez vous désabonner ;
+      le traitement qu'il en fait relève de sa propre politique de confidentialité. Avant d'agir, G-Desk lit les
+      en-têtes des messages reçus au cours de l'année écoulée, sur votre ordinateur uniquement.</p>
 
     <h2 id="google">4. Accès à votre compte Google</h2>
     <p>G-Desk accède à votre messagerie par l'<a href="https://developers.google.com/workspace/gmail/api">API Gmail</a>

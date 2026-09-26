@@ -47,7 +47,15 @@ QString displayName(const QString &address); // « Jean Dupont <j@x.fr> » → �
 QString emailOnly(const QString &address);   // « Jean Dupont <j@x.fr> » → « j@x.fr »
 QString textToHtml(const QString &text);
 QString htmlToText(const QString &html);
+// Dates dans le style choisi dans les paramètres :
+//  liste (shortDate) : « short » 25 sept. · « numeric » 25/09 · « medium » jeu. 25 sept. ·
+//                      « long » jeudi 25 septembre · « relative » il y a 3 h
+//  complète (longDate) : « long » jeudi 25 septembre 2026 à 14:32 · « abbreviated » jeu. 25 sept. 2026, 14:32 ·
+//                        « numeric » 25/09/2026 14:32 (jamais le nom du fuseau horaire)
+void setDateStyles(const QString &listStyle, const QString &fullStyle, bool alwaysTime);
 QString shortDate(const QDateTime &date);
-QString longDate(const QDateTime &date); // « jeudi 25 septembre 2026 à 14:32 » (sans fuseau horaire)
+QString shortDate(const QDateTime &date, const QString &style, bool alwaysTime, const QDateTime &now);
+QString longDate(const QDateTime &date);
+QString longDate(const QDateTime &date, const QString &style);
 QString humanSize(qint64 bytes);
 }

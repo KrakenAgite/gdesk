@@ -131,6 +131,16 @@ void GmailApi::getMessage(const QString &id, bool full, Callback cb)
     call("GET", "messages/" + id, q, {}, cb);
 }
 
+void GmailApi::getMessageHeaders(const QString &id, const QStringList &headers, Callback cb)
+{
+    QUrlQuery q;
+    q.addQueryItem("format", "metadata");
+    for (const QString &h : headers)
+        q.addQueryItem("metadataHeaders", h);
+    q.addQueryItem("fields", "id,internalDate,payload/headers");
+    call("GET", "messages/" + id, q, {}, cb);
+}
+
 void GmailApi::modifyMessages(const QStringList &ids, const QStringList &add, const QStringList &remove, Callback cb)
 {
     QJsonObject body{{"ids", QJsonArray::fromStringList(ids)},

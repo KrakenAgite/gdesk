@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gdesk VERSION 2.4.0 LANGUAGES CXX)
+project(gdesk VERSION 2.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,7 @@ add_executable(gdesk
     src/theme.cpp src/theme.h
     src/maillistdelegate.cpp src/maillistdelegate.h
     src/sidebar.cpp src/sidebar.h
+    src/unsubscribe.cpp src/unsubscribe.h
     data/gdesk.qrc)
 target_compile_definitions(gdesk PRIVATE GDESK_VERSION="${PROJECT_VERSION}")
 
@@ -65,7 +66,7 @@ if(GDESK_BUILD_TESTS)
     add_executable(gdesk-tests tests/tests.cpp
         src/mime.cpp src/googleauth.cpp src/gmailapi.cpp src/messageview.cpp
         src/settingsdialog.cpp src/theme.cpp src/mainwindow.cpp src/composer.cpp src/setupdialog.cpp src/maillistdelegate.cpp src/sidebar.cpp
-        src/driveapi.cpp src/drivebrowser.cpp src/driveview.cpp
+        src/driveapi.cpp src/drivebrowser.cpp src/driveview.cpp src/unsubscribe.cpp
         data/gdesk.qrc)
     target_include_directories(gdesk-tests PRIVATE src)
     target_compile_definitions(gdesk-tests PRIVATE GDESK_VERSION="${PROJECT_VERSION}")

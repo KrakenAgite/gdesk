@@ -372,28 +372,80 @@ QString htmlToText(const QString &html)
     return doc.toPlainText();
 }
 
+// Styles choisis dans les paramètres (voir setDateStyles)
+static QString s_listStyle = "short", s_fullStyle = "long";
+static bool s_alwaysTime = false;
+
+void setDateStyles(const QString &listStyle, const QString &fullStyle, bool alwaysTime)
+{
+    s_listStyle = listStyle;
+    s_fullStyle = fullStyle;
+    s_alwaysTime = alwaysTime;
+}
+
 QString shortDate(const QDateTime &date)
 {
+    return shortDate(date, s_listStyle, s_alwaysTime, QDateTime::currentDateTime());
+}
+
+QString shortDate(const QDateTime &date, const QString &style, bool alwaysTime, const QDateTime &now)
+{
+    if (!date.isValid() || date.toMSecsSinceEpoch() == 0)
+        return {};
     const QDateTime local = date.toLocalTime();
-    const QDate today = QDate::currentDate();
+    const QDate day = local.date(), today = now.date();
+    const qint64 days = day.daysTo(today);
+    const bool thisYear = day.year() == today.year();
     QLocale locale;
-    if (local.date() == today)
-        return locale.toString(local.time(), "HH:mm");
-    if (local.date().year() == today.year())
-        return locale.toString(local.date(), "d MMM");
-    return locale.toString(local.date(), "dd/MM/yyyy");
+    const QString time = locale.toString(local.time(), "HH:mm");
+    QString text;
+    if (style == "relative") {
+        const qint64 minutes = local.secsTo(now) / 60;
+        if (days == 0 && minutes < 1)
+            return "à l'instant";
+        if (days == 0 && minutes < 60)
+            return QString("il y a %1 min").arg(qMax<qint64>(1, minutes));
+        if (days == 0)
+            return QString("il y a %1 h").arg(minutes / 60);
+        text = days == 1 ? QString("hier") : days < 7 && days > 0 ? QString("il y a %1 jours").arg(days)
+             : thisYear ? locale.toString(day, "d MMM") : locale.toString(day, "MMM yyyy");
+        return alwaysTime ? QString("%1, %2").arg(text, time) : text;
+    }
+    if (days == 0) // aujourd'hui : l'heure suffit
+        return style == "long" ? QString("aujourd'hui à %1").arg(time) : time;
+    if (style == "numeric")
+        text = locale.toString(day, thisYear ? "dd/MM" : "dd/MM/yy");
+    else if (style == "medium")
+        text = days == 1 ? QString("hier") : days > 0 && days < 7 ? locale.toString(day, "ddd")
+             : locale.toString(day, thisYear ? "ddd d MMM" : "d MMM yyyy");
+    else if (style == "long")
+        text = days == 1 ? QString("hier") : locale.toString(day, thisYear ? "dddd d MMMM" : "d MMMM yyyy");
+    else // court
+        text = locale.toString(day, thisYear ? "d MMM" : "dd/MM/yyyy");
+    if (!alwaysTime)
+        return text;
+    return style == "long" ? QString("%1 à %2").arg(text, time) : QString("%1 %2").arg(text, time);
 }
 
 QString longDate(const QDateTime &date)
 {
+    return longDate(date, s_fullStyle);
+}
+
+QString longDate(const QDateTime &date, const QString &style)
+{
     // Le format « long » de Qt ajoute le nom du fuseau (« heure d'été d'Europe centrale ») et les secondes :
-    // on compose la date longue et l'heure courte séparément.
+    // on compose la date et l'heure séparément.
     if (!date.isValid() || date.toMSecsSinceEpoch() == 0)
         return {};
     const QDateTime local = date.toLocalTime();
     QLocale locale;
-    return QString("%1 à %2").arg(locale.toString(local.date(), QLocale::LongFormat),
-                                  locale.toString(local.time(), "HH:mm"));
+    const QString time = locale.toString(local.time(), "HH:mm");
+    if (style == "numeric")
+        return QString("%1 %2").arg(locale.toString(local.date(), "dd/MM/yyyy"), time);
+    if (style == "abbreviated")
+        return QString("%1, %2").arg(locale.toString(local.date(), "ddd d MMM yyyy"), time);
+    return QString("%1 à %2").arg(locale.toString(local.date(), QLocale::LongFormat), time);
 }
 
 QString humanSize(qint64 bytes)

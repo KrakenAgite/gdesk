@@ -38,6 +38,8 @@ class MainWindow : public QMainWindow
 public:
     MainWindow();
 
+    // Recherche Gmail des non-lus comptés dans la pastille (vide si aucune boîte)
+    static QString badgeQuery(const QStringList &folders, const QMap<QString, QString> &labelNames);
     void composeMailto(const QUrl &mailto);
     void bringToFront();
     bool hasTray() const { return m_tray != nullptr; }
@@ -97,6 +99,7 @@ private:
     void openAttachment(int index);
     void saveAttachmentToDrive(int index);
     void composeWithDriveFiles(const QList<DriveFile> &files);
+    void openUnsubscribe(); // newsletters à cocher pour s'en désabonner
     void rememberAddresses(const QString &addresses);
     void setKnownAddresses(const QStringList &addresses);
 
@@ -138,6 +141,7 @@ private:
     QList<LabelChoice> userLabelChoices() const;
     void notify(const QString &title, const QString &text);
     void setUnread(int count);
+    void refreshBadge();
     QIcon badgeIcon(int count) const;
     void updateLauncherBadge(int count);
     void about();
@@ -173,6 +177,7 @@ private:
 
     QAction *m_actReply, *m_actReplyAll, *m_actForward;
     QAction *m_actArchive, *m_actDelete, *m_actRestore, *m_actSpam, *m_actRead, *m_actStar, *m_actRefresh;
+    QAction *m_actUnsubscribe;
 
     // Réglages (voir SettingsDialog)
     QString m_layout = "below";
@@ -181,6 +186,8 @@ private:
     bool m_closeToTray = true;
     bool m_notificationsOn = true;
     QStringList m_notifyFolders;      // boîtes dont les nouveaux messages sont notifiés
+    QStringList m_badgeFolders{"INBOX"}; // boîtes comptées dans la pastille de non-lus
+    int m_badgeGeneration = 0;
     QString m_notifyFolder = "INBOX"; // boîte ouverte au clic sur la dernière notification
     int m_pollGeneration = 0;
     bool m_bulkBusy = false;

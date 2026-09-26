@@ -358,3 +358,8 @@ void MessageView::render()
     m_remoteBar->setVisible(hasRemote && !m_allowRemote);
     ensureEngine()->setUrl(QUrl(QString("%1://msg/%2?n=%3").arg(Scheme, m_message.id).arg(++m_loadCounter)));
 }
+
+void MessageView::refreshDate()
+{
+    m_date->setText(Mime::longDate(m_message.date));
+}

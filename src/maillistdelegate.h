@@ -8,7 +8,7 @@ enum {
     Id = Qt::UserRole,  // identifiant Gmail
     Labels,             // QStringList des libellés (UNREAD, STARRED…)
     Who,                // expéditeur (ou « À : … » dans Envoyés)
-    Date,               // date courte (« 14:32 », « 3 sept. »…)
+    Date,               // QDateTime (ou texte déjà formaté)
     Subject,
     Snippet,
     Checked,            // bool : case cochée (sélection pour une action groupée)
@@ -27,6 +27,7 @@ public:
 
     QString density = "comfortable"; // compact, comfortable, spacious
     bool showSnippet = true;
+    double dateSizeDelta = 0; // taille des dates, en points par rapport au petit texte
     bool selectionMode = false; // au moins un message coché : cases visibles sur toutes les cartes
 
     // Intercepte les clics sur la case et l'étoile avant la liste (pour ne pas ouvrir le message)

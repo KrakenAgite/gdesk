@@ -22,6 +22,10 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
   glisser-déposer), nouveau dossier, renommer, suivre, supprimer, envoyer par e-mail, espace utilisé
 - Joindre un fichier Google Drive à un message (Docs, Sheets, Slides exportés en .docx, .xlsx, .pptx ; lien
   proposé au-delà de 25 Mo) et enregistrer une pièce jointe dans Google Drive
+- **Désabonnement des newsletters** : liste des listes de diffusion trouvées dans les messages reçus, à cocher ;
+  désabonnement en un clic (RFC 8058), par e-mail ou par la page web de l'expéditeur
+- Dates au choix : courte, numérique, semi-courte, longue ou relative, taille réglable, heure toujours visible
+- Pastille de non-lus limitée aux boîtes choisies (réception, catégories, suivis, libellés)
 - Recherche avec la syntaxe Gmail (`from:`, `has:attachment`, `after:2026/01/01`…)
 - Relève réglable, notifications KDE par boîte ou catégorie au choix, pastille de non-lus, liens `mailto:`
 - Connexion OAuth 2.0 (PKCE) dans le navigateur ; jeton rangé dans KWallet

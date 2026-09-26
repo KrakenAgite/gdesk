@@ -25,6 +25,7 @@ public:
     ~MessageView() override;
 
     void showMessage(const MailMessage &message, bool allowRemote);
+    void refreshDate(); // après un changement du format des dates
     void clear();
     const MailMessage &message() const { return m_message; }
     void setZoom(double factor);

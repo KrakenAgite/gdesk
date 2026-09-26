@@ -24,6 +24,8 @@ public:
     void listMessages(const QStringList &labelIds, const QString &query, const QString &pageToken,
                       int maxResults, Callback cb);
     void getMessage(const QString &id, bool full, Callback cb);
+    // En-têtes choisis d'un message (format « metadata »)
+    void getMessageHeaders(const QString &id, const QStringList &headers, Callback cb);
     // URL de messages.list (exposée pour les tests d'encodage)
     static void setBaseUrlForTesting(const QString &url); // faux serveur Gmail des tests
     static QUrl messagesUrl(const QStringList &labelIds, const QString &query, const QString &pageToken, int maxResults);

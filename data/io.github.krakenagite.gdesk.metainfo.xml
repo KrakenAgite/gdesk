@@ -50,6 +50,12 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.5.0" date="2026-09-26">
+      <description>
+        <p>Unsubscribe from newsletters: G-Desk lists the mailing lists found in received messages with checkboxes and unsubscribes from the checked ones (one-click, by e-mail or through the sender's web page).</p>
+        <p>New settings: date format in the list (short, numeric, medium, long or relative) and in opened messages, date size, and which folders count towards the unread badge. The Apply button is only enabled when a setting has changed.</p>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-09-25">
       <description>
         <p>Google Drive: a navigation bar on the left switches between mail and Drive (Ctrl+1 / Ctrl+2). Browse My Drive, recent, starred, shared and trashed files, search, open, download, upload (also by drag and drop), create folders, rename, star, trash, and see the storage used.</p>

@@ -3,6 +3,7 @@
 #include "driveapi.h"
 #include "drivebrowser.h"
 #include "driveview.h"
+#include "unsubscribe.h"
 #include "gmailapi.h"
 #include "googleauth.h"
 #include "maillistdelegate.h"
@@ -31,6 +32,7 @@
 #include <QToolBar>
 #include <QHeaderView>
 #include <QLabel>
+#include <QGroupBox>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
@@ -101,6 +103,9 @@ public:
     QStringList trashed;
     QStringList metadataRequests; // identifiants dont les détails ont été demandés
     QStringList listFields;       // paramètre « fields » des listes
+    QMap<QString, QJsonArray> customHeaders; // en-têtes propres à un message (newsletters)
+    QList<QByteArray> sent;                  // messages envoyés (RFC 2822)
+    QStringList unsubscribePosts;            // « chemin corps » des désabonnements en un clic
 
     FakeGmail()
     {
@@ -181,6 +186,16 @@ private:
             trashed << id;
             return {{"id", id}};
         }
+        if (method == "POST" && path == "messages/send") {
+            sent << QByteArray::fromBase64(QJsonDocument::fromJson(body).object().value("raw").toString().toLatin1(),
+                                           QByteArray::Base64UrlEncoding);
+            return {{"id", "envoye"}};
+        }
+        if (method == "GET" && path.startsWith("messages/") && customHeaders.contains(path.section('/', 1, 1))) {
+            const QString id = path.section('/', 1, 1);
+            return {{"id", id}, {"internalDate", QString::number(1758800000000LL + order.indexOf(id) * -60000)},
+                    {"payload", QJsonObject{{"headers", customHeaders.value(id)}}}};
+        }
         if (method == "GET" && path.startsWith("messages/")) {
             const QString id = path.section('/', 1, 1);
             metadataRequests << id;
@@ -222,6 +237,12 @@ private:
         s->setProperty("buf", QByteArray());
         const QList<QByteArray> requestLine = head.left(head.indexOf("\r\n")).split(' ');
         const QUrl url("http://x" + QString::fromLatin1(requestLine.value(1)));
+        if (url.path().startsWith("/unsub/")) { // lien de désabonnement en un clic d'une newsletter
+            unsubscribePosts << requestLine.value(0) + " " + url.path() + " " + buf.mid(headerEnd + 4, length);
+            s->write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            s->disconnectFromHost();
+            return;
+        }
         const QByteArray out = QJsonDocument(route(requestLine.value(0), url.path().section("/users/me/", 1),
                                                    QUrlQuery(url), buf.mid(headerEnd + 4, length)))
                                    .toJson(QJsonDocument::Compact);
@@ -745,6 +766,10 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
                 QTest::qWait(50);
                 if (!out.isEmpty())
                     dlg.grab().save(QString("%1/settings-%2-%3.png").arg(out, theme).arg(i));
+                if (!out.isEmpty() && i == 0)
+                    for (QGroupBox *box : dlg.findChildren<QGroupBox *>())
+                        if (box->title() == "Dates")
+                            box->grab().save(QString("%1/settings-dates-%2.png").arg(out, theme));
             }
             // Choix : thème sombre, lignes espacées, aperçu à droite
             for (PreviewCard *card : dlg.findChildren<PreviewCard *>())
@@ -1024,7 +1049,8 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
 
             QTreeWidget *tree = nullptr;
             for (QTreeWidget *t : dlg.findChildren<QTreeWidget *>())
-                if (t->topLevelItemCount() > 0 && t->topLevelItem(0)->flags() & Qt::ItemIsUserCheckable)
+                if (t->topLevelItemCount() > 0 && t->topLevelItem(0)->flags() & Qt::ItemIsUserCheckable
+                    && t->objectName() != "badgeTree")
                     tree = t;
             QVERIFY(tree);
             QHash<QString, QTreeWidgetItem *> items;
@@ -1051,8 +1077,9 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
             SettingsDialog dlg(settings, "moi@gmail.com", labels);
             QHash<QString, QTreeWidgetItem *> items;
             for (QTreeWidget *t : dlg.findChildren<QTreeWidget *>())
-                for (QTreeWidgetItemIterator it(t); *it; ++it)
-                    items.insert((*it)->data(0, Qt::UserRole).toString(), *it);
+                if (t->objectName() != "badgeTree")
+                    for (QTreeWidgetItemIterator it(t); *it; ++it)
+                        items.insert((*it)->data(0, Qt::UserRole).toString(), *it);
             QCOMPARE(items["INBOX"]->checkState(0), Qt::PartiallyChecked);
             QCOMPARE(items["CATEGORY_PROMOTIONS"]->checkState(0), Qt::Unchecked);
             QCOMPARE(items["Label_1"]->checkState(0), Qt::Checked);
@@ -1513,6 +1540,236 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         QCOMPARE(watch.destroyed, 0);
         QVERIFY2(watch.others.isEmpty(), qPrintable(watch.others.join(", ")));
 
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void settingsApplyButton()
+    {
+        QTemporaryDir dir;
+        QSettings settings(dir.filePath("gdesk.conf"), QSettings::IniFormat);
+        SettingsDialog dlg(settings, "moi@gmail.com");
+        QPushButton *apply = dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply);
+        QVERIFY(!apply->isEnabled()); // rien de modifié
+        auto *snippet = [&] {
+            for (QCheckBox *c : dlg.findChildren<QCheckBox *>())
+                if (c->text().startsWith("Afficher le début"))
+                    return c;
+            return static_cast<QCheckBox *>(nullptr);
+        }();
+        QVERIFY(snippet);
+        snippet->toggle();
+        QVERIFY(apply->isEnabled());
+        snippet->toggle(); // retour à l'état enregistré
+        QVERIFY(!apply->isEnabled());
+
+        QTreeWidget *badge = dlg.findChild<QTreeWidget *>("badgeTree");
+        badge->topLevelItem(0)->setCheckState(0, Qt::Unchecked);
+        QVERIFY(apply->isEnabled());
+        apply->click();
+        QVERIFY(!apply->isEnabled()); // enregistré
+        QVERIFY(settings.value("badge_folders").toStringList().isEmpty());
+
+        QLineEdit *name = nullptr;
+        for (QLineEdit *e : dlg.findChildren<QLineEdit *>())
+            if (!qobject_cast<QComboBox *>(e->parentWidget()))
+                name = name ? name : e;
+        QVERIFY(name);
+        name->setText("Gabriel");
+        QVERIFY(apply->isEnabled());
+    }
+    void badgeFolders()
+    {
+        // Recherche des non-lus comptés : une seule requête, chaque message compté une fois
+        const QMap<QString, QString> names{{"Label_1", "Factures"}, {"Label_3", "Voyages/Japon 2026"}};
+        QCOMPARE(MainWindow::badgeQuery({}, names), QString());
+        QCOMPARE(MainWindow::badgeQuery({"INBOX"}, names), QString("is:unread (in:inbox)"));
+        QCOMPARE(MainWindow::badgeQuery({"CATEGORY_PERSONAL", "STARRED", "Label_3"}, names),
+                 QString("is:unread ((in:inbox category:primary) OR is:starred OR label:\"Voyages-Japon-2026\")"));
+        QCOMPARE(MainWindow::badgeQuery({"Label_inconnu"}, names), QString()); // libellé supprimé
+
+        // Paramètres : arbre séparé de celui des notifications, réception par défaut
+        QTemporaryDir dir;
+        QSettings settings(dir.filePath("gdesk.conf"), QSettings::IniFormat);
+        const QList<LabelChoice> labels{{"Label_1", "Factures", QColor("#fb4c2f")}};
+        auto itemsOf = [](QTreeWidget *tree) {
+            QHash<QString, QTreeWidgetItem *> items;
+            for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                items.insert((*it)->data(0, Qt::UserRole).toString(), *it);
+            return items;
+        };
+        {
+            SettingsDialog dlg(settings, "moi@gmail.com", labels);
+            auto *tree = dlg.findChild<QTreeWidget *>("badgeTree");
+            QVERIFY(tree);
+            auto items = itemsOf(tree);
+            QCOMPARE(items["INBOX"]->checkState(0), Qt::Checked);
+            items["INBOX"]->setCheckState(0, Qt::Unchecked);
+            items["CATEGORY_PERSONAL"]->setCheckState(0, Qt::Checked);
+            items["Label_1"]->setCheckState(0, Qt::Checked);
+            dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();
+        }
+        QStringList badge = settings.value("badge_folders").toStringList();
+        badge.sort();
+        QCOMPARE(badge, (QStringList{"CATEGORY_PERSONAL", "Label_1"}));
+        QCOMPARE(settings.value("notify_folders").toStringList(), QStringList{"INBOX"}); // inchangé
+        {
+            SettingsDialog dlg(settings, "moi@gmail.com", labels);
+            auto items = itemsOf(dlg.findChild<QTreeWidget *>("badgeTree"));
+            QCOMPARE(items["INBOX"]->checkState(0), Qt::PartiallyChecked);
+            QCOMPARE(items["Label_1"]->checkState(0), Qt::Checked);
+            for (auto *it : items) // plus rien : jamais de pastille
+                if (it->childCount() == 0)
+                    it->setCheckState(0, Qt::Unchecked);
+            dlg.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();
+        }
+        QVERIFY(settings.contains("badge_folders"));
+        QVERIFY(settings.value("badge_folders").toStringList().isEmpty());
+    }
+    void dateStyles()
+    {
+        QLocale::setDefault(QLocale(QLocale::French, QLocale::France));
+        const QDateTime now(QDate(2026, 9, 25), QTime(15, 0)); // vendredi
+        auto at = [](int y, int m, int d, int h = 9, int min = 5) { return QDateTime(QDate(y, m, d), QTime(h, min)); };
+        const QDateTime today = at(2026, 9, 25, 14, 32), yesterday = at(2026, 9, 24), monday = at(2026, 9, 21),
+                        earlier = at(2026, 9, 1), old = at(2025, 3, 7);
+        auto list = [&](const QString &style, bool time = false) {
+            QStringList out;
+            for (const QDateTime &d : {today, yesterday, monday, earlier, old})
+                out << Mime::shortDate(d, style, time, now);
+            return out.join(" | ");
+        };
+        QCOMPARE(list("short"), QString("14:32 | 24 sept. | 21 sept. | 1 sept. | 07/03/2025"));
+        QCOMPARE(list("numeric"), QString("14:32 | 24/09 | 21/09 | 01/09 | 07/03/25"));
+        QCOMPARE(list("medium"), QString("14:32 | hier | lun. | mar. 1 sept. | 7 mars 2025"));
+        QCOMPARE(list("long"), QString("aujourd'hui à 14:32 | hier | lundi 21 septembre | mardi 1 septembre | 7 mars 2025"));
+        QCOMPARE(list("relative"), QString("il y a 28 min | hier | il y a 4 jours | 1 sept. | mars 2025"));
+        QCOMPARE(list("short", true), QString("14:32 | 24 sept. 09:05 | 21 sept. 09:05 | 1 sept. 09:05 | 07/03/2025 09:05"));
+        QCOMPARE(Mime::shortDate(yesterday, "long", true, now), QString("hier à 09:05"));
+        QCOMPARE(Mime::shortDate(now.addSecs(-20), "relative", false, now), QString("à l'instant"));
+        QCOMPARE(Mime::shortDate(at(2026, 9, 25, 10, 0), "relative", false, now), QString("il y a 5 h"));
+
+        QCOMPARE(Mime::longDate(today, "long"), QString("vendredi 25 septembre 2026 à 14:32"));
+        QCOMPARE(Mime::longDate(today, "abbreviated"), QString("ven. 25 sept. 2026, 14:32"));
+        QCOMPARE(Mime::longDate(today, "numeric"), QString("25/09/2026 14:32"));
+        // Style choisi dans les paramètres, appliqué partout
+        Mime::setDateStyles("numeric", "abbreviated", false);
+        QCOMPARE(Mime::longDate(today), QString("ven. 25 sept. 2026, 14:32"));
+        QCOMPARE(Mime::shortDate(old), QString("07/03/25"));
+        Mime::setDateStyles("short", "long", false);
+        QLocale::setDefault(QLocale::system());
+    }
+    void unsubscribeHeaders()
+    {
+        // Désabonnement en un clic (RFC 8058) : https et List-Unsubscribe-Post exigés
+        auto m = UnsubscribeMethods::parse("<mailto:quit@news.fr?subject=stop>, <https://news.fr/u?id=42>",
+                                           "List-Unsubscribe=One-Click");
+        QCOMPARE(m.oneClick, QUrl("https://news.fr/u?id=42"));
+        QCOMPARE(m.mailto.path(), QString("quit@news.fr"));
+        QCOMPARE(m.description(), QString("En un clic"));
+        m = UnsubscribeMethods::parse("<https://news.fr/u?id=42>", {}); // sans l'en-tête Post : page web
+        QVERIFY(m.oneClick.isEmpty());
+        QCOMPARE(m.web, QUrl("https://news.fr/u?id=42"));
+        QCOMPARE(m.description(), QString("Page web"));
+        m = UnsubscribeMethods::parse("<http://news.fr/u>", "List-Unsubscribe=One-Click"); // pas de POST en http
+        QVERIFY(m.oneClick.isEmpty());
+        QCOMPARE(m.web, QUrl("http://news.fr/u"));
+        m = UnsubscribeMethods::parse("<mailto:quit@news.fr>", {});
+        QCOMPARE(m.description(), QString("Par e-mail"));
+        QVERIFY(!UnsubscribeMethods::parse({}, {}).isValid());
+        QVERIFY(!UnsubscribeMethods::parse("<javascript:alert(1)>, <file:///etc/passwd>", {}).isValid());
+        QVERIFY(!UnsubscribeMethods::parse("https://sans-chevrons.fr", {}).isValid());
+    }
+    void unsubscribeDialog()
+    {
+        FakeGmail gmail;
+        const QString oneClickUrl = QString("http://127.0.0.1:%1/unsub/promo").arg(gmail.server.serverPort());
+        auto add = [&](const QString &id, const QString &from, const QString &list, const QString &post = {}) {
+            gmail.add(id, {"INBOX", "CATEGORY_PROMOTIONS"});
+            QJsonArray h = headers({{"From", from}, {"Subject", "Offre " + id}});
+            if (!list.isEmpty())
+                h.append(QJsonObject{{"name", "List-Unsubscribe"}, {"value", list}});
+            if (!post.isEmpty())
+                h.append(QJsonObject{{"name", "List-Unsubscribe-Post"}, {"value", post}});
+            gmail.customHeaders.insert(id, h);
+        };
+        add("p1", "Promo Shop <promo@shop.fr>", "<" + oneClickUrl + ">", "List-Unsubscribe=One-Click");
+        add("p2", "Promo Shop <PROMO@shop.fr>", "<" + oneClickUrl + ">", "List-Unsubscribe=One-Click");
+        add("p3", "Promo Shop <promo@shop.fr>", "<" + oneClickUrl + ">", "List-Unsubscribe=One-Click");
+        add("n1", "=?UTF-8?Q?La_Lettre_=C3=A9t=C3=A9?= <lettre@journal.fr>", "<mailto:quit@journal.fr?subject=STOP>");
+        add("w1", "Club <club@club.fr>", "<https://club.fr/desinscription>");
+        add("x1", "Ami <ami@perso.fr>", {}); // message ordinaire : pas une newsletter
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        UnsubscribeDialog::setAllowHttpForTesting(true);
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+        QNetworkAccessManager nam;
+        GoogleAuth auth(&nam);
+        GmailApi api(&auth, &nam);
+
+        {
+            UnsubscribeDialog dlg(&api, "Moi <moi@exemple.fr>");
+            dlg.show();
+            QTreeWidget *list = dlg.list();
+            QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 3, 10000);
+            // Regroupées par expéditeur (adresse sans casse), triées par nombre de messages
+            QTreeWidgetItem *promo = list->topLevelItem(0);
+            QCOMPARE(promo->text(UnsubscribeDialog::AddressColumn), QString("promo@shop.fr"));
+            QCOMPARE(promo->text(UnsubscribeDialog::CountColumn), QString("3"));
+            QCOMPARE(promo->text(UnsubscribeDialog::MethodColumn), QString("En un clic"));
+            QTreeWidgetItem *lettre = nullptr, *club = nullptr;
+            for (int i = 0; i < 3; ++i) {
+                QTreeWidgetItem *it = list->topLevelItem(i);
+                QCOMPARE(it->checkState(UnsubscribeDialog::NameColumn), Qt::Unchecked); // rien de coché d'office
+                if (it->text(UnsubscribeDialog::AddressColumn) == "lettre@journal.fr")
+                    lettre = it;
+                if (it->text(UnsubscribeDialog::AddressColumn) == "club@club.fr")
+                    club = it;
+            }
+            QVERIFY(lettre && club);
+            QCOMPARE(lettre->text(UnsubscribeDialog::NameColumn), QString("La Lettre été")); // nom décodé
+            QCOMPARE(club->text(UnsubscribeDialog::MethodColumn), QString("Page web"));
+
+            auto *button = dlg.findChild<QPushButton *>("unsubscribeButton");
+            QVERIFY(!button->isEnabled());
+            promo->setCheckState(UnsubscribeDialog::NameColumn, Qt::Checked);
+            lettre->setCheckState(UnsubscribeDialog::NameColumn, Qt::Checked);
+            QVERIFY(button->isEnabled());
+            QCOMPARE(button->text(), QString("Se désabonner (2)"));
+
+            // Confirmation, puis désabonnement : POST en un clic et e-mail de désabonnement
+            QTimer::singleShot(0, &dlg, [] {
+                for (QWidget *w : QApplication::topLevelWidgets())
+                    if (auto *box = qobject_cast<QMessageBox *>(w); box && box->isVisible())
+                        box->button(QMessageBox::Yes)->click();
+            });
+            button->click();
+            QTRY_COMPARE_WITH_TIMEOUT(gmail.unsubscribePosts.size(), 1, 10000);
+            QCOMPARE(gmail.unsubscribePosts.first(), QString("POST /unsub/promo List-Unsubscribe=One-Click"));
+            QTRY_COMPARE_WITH_TIMEOUT(gmail.sent.size(), 1, 10000);
+            const QByteArray mail = gmail.sent.first();
+            QVERIFY(mail.contains("To: quit@journal.fr"));
+            QVERIFY(mail.contains("Subject: STOP"));
+            QVERIFY(mail.contains("From: Moi <moi@exemple.fr>"));
+            QTRY_COMPARE_WITH_TIMEOUT(promo->text(UnsubscribeDialog::MethodColumn), QString("Désabonné"), 10000);
+            QTRY_COMPARE_WITH_TIMEOUT(lettre->text(UnsubscribeDialog::MethodColumn), QString("Demande envoyée par e-mail"), 10000);
+            QVERIFY(!(promo->flags() & Qt::ItemIsUserCheckable)); // traité : plus de case
+            QVERIFY(!button->isEnabled());
+            QVERIFY(club->flags() & Qt::ItemIsUserCheckable);
+            if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty()) {
+                dlg.resize(860, 420);
+                QTest::qWait(200);
+                dlg.grab().save(out + "/unsubscribe.png");
+            }
+        }
+        // Listes quittées : plus proposées à la recherche suivante
+        {
+            UnsubscribeDialog dlg(&api, "moi@exemple.fr");
+            QTRY_COMPARE_WITH_TIMEOUT(dlg.list()->topLevelItemCount(), 1, 10000);
+            QCOMPARE(dlg.list()->topLevelItem(0)->text(UnsubscribeDialog::AddressColumn), QString("club@club.fr"));
+        }
+
+        UnsubscribeDialog::setAllowHttpForTesting(false);
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});
     }
