@@ -14,7 +14,7 @@ Client mail natif (C++ / Qt6) pour Gmail, sous KDE, utilisant l'**API officielle
   (UTF-8, Windows-1252, ISO-8859-x, cyrillique, japonais, chinois…)
 - Répondre, répondre à tous, transférer (avec pièces jointes), nouveau message,
   pièces jointes, brouillons enregistrés dans Gmail, autocomplétion des adresses
-- Cases à cocher sur les messages et barre de sélection (Tous, Lus, Non lus, Suivis… ; Maj+clic pour une plage) :
+- Cases à cocher sur les messages et barre de sélection (Tous, Lus, Non lus, Suivis… ; Ctrl+clic un par un, Maj+clic pour une plage) :
   lu / non lu, archiver, spam, supprimer, suivi, libellé — sans ouvrir les messages
 - Clic droit sur une boîte : tout sélectionner, tout marquer comme lu / non lu, vider la boîte (vers la corbeille)
 - **Google Drive** : barre de navigation à gauche pour passer du courrier à Drive (Ctrl+1 / Ctrl+2) ;

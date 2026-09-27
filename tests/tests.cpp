@@ -33,6 +33,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QGroupBox>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
@@ -1240,8 +1241,8 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
                 n += list->topLevelItem(i)->data(0, MailRoles::Checked).toBool();
             return n;
         };
-        QTRY_COMPARE_WITH_TIMEOUT(checkedCount(), 50, 15000); // première page de 50, toutes cochées
-        QCOMPARE(list->topLevelItemCount(), 50);
+        QTRY_COMPARE_WITH_TIMEOUT(checkedCount(), 25, 15000); // premier lot de 25, tout coché
+        QCOMPARE(list->topLevelItemCount(), 25); // fenêtre cachée : pas de lot suivant sans défilement
 
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});
@@ -1539,6 +1540,111 @@ print(json.dumps({'subject': m['subject'], 'from': str(m['from']), 'to': str(m['
         qApp->removeEventFilter(&watch);
         QCOMPARE(watch.destroyed, 0);
         QVERIFY2(watch.others.isEmpty(), qPrintable(watch.others.join(", ")));
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void listBatchesAndEmptyState()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 60; ++i)
+            gmail.add(QString("m%1").arg(i), {"INBOX"});
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+
+        MainWindow win;
+        win.resize(1200, 700);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        QTreeWidget *list = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                list = t;
+        auto *empty = win.findChild<QLabel *>("emptyListLabel");
+        QVERIFY(list && empty);
+
+        // Lots de 25 : les détails arrivent par petits groupes, pas tous d'un coup
+        win.folderMenu("INBOX")->actions().first()->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(list->topLevelItemCount() >= 25, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.metadataRequests.size(), list->topLevelItemCount(), 15000);
+        QCOMPARE(win.metadataPeak(), 5); // 5 à la fois au plus
+        QVERIFY(gmail.metadataRequests.indexOf("m0") < gmail.metadataRequests.indexOf("m20")); // de haut en bas
+        QVERIFY(list->topLevelItemCount() < 60); // la suite attend le défilement
+        QVERIFY(!empty->isVisible());
+        list->verticalScrollBar()->setValue(list->verticalScrollBar()->maximum());
+        QTRY_VERIFY_WITH_TIMEOUT(list->topLevelItemCount() > 25, 10000);
+
+        // Boîte vide : message explicite au lieu d'une liste blanche
+        win.folderMenu("SPAM")->actions().first()->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(empty->isVisible() && empty->text().contains("Aucun message"), 10000);
+        QVERIFY(empty->text().contains("Spam"));
+        if (const QString out = qEnvironmentVariable("GDESK_TEST_OUT"); !out.isEmpty())
+            win.grab().save(out + "/empty-list.png");
+        QCOMPARE(list->topLevelItemCount(), 0);
+
+        GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
+        GoogleAuth::setAccessTokenForTesting({});
+    }
+    void modifierClickSelection()
+    {
+        FakeGmail gmail;
+        for (int i = 0; i < 8; ++i)
+            gmail.add(QString("m%1").arg(i), {"INBOX"});
+        GmailApi::setBaseUrlForTesting(gmail.base());
+        GoogleAuth::setAccessTokenForTesting("jeton-de-test");
+        QTemporaryDir dir;
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+
+        MainWindow win;
+        win.resize(1200, 800);
+        qobject_cast<QStackedWidget *>(win.centralWidget())->setCurrentIndex(1);
+        win.populateFolders(QJsonObject{{"labels", QJsonArray{}}});
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        QTreeWidget *list = nullptr;
+        for (QTreeWidget *t : win.findChildren<QTreeWidget *>())
+            if (qobject_cast<MailListDelegate *>(t->itemDelegate()))
+                list = t;
+        win.folderMenu("INBOX")->actions().first()->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(gmail.metadataRequests.size(), 8, 10000);
+        QTest::keyClick(&win, Qt::Key_Escape);
+        auto checked = [&] {
+            QStringList ids;
+            for (int i = 0; i < list->topLevelItemCount(); ++i)
+                if (list->topLevelItem(i)->data(0, MailRoles::Checked).toBool())
+                    ids << list->topLevelItem(i)->data(0, MailRoles::Id).toString();
+            return ids;
+        };
+        auto clickCard = [&](int row, Qt::KeyboardModifiers mods = {}) {
+            const QRect r = list->visualItemRect(list->topLevelItem(row));
+            QTest::mouseClick(list->viewport(), Qt::LeftButton, mods, QPoint(r.center().x(), r.top() + r.height() / 3));
+        };
+        auto *view = win.findChild<MessageView *>();
+
+        clickCard(1); // ouvre m1
+        QTRY_COMPARE_WITH_TIMEOUT(view->message().id, QString("m1"), 10000);
+        QVERIFY(checked().isEmpty());
+        // Ctrl+clic : le message ouvert et celui-ci, un par un ; rien d'autre ne s'ouvre
+        clickCard(3, Qt::ControlModifier);
+        QCOMPARE(checked(), (QStringList{"m1", "m3"}));
+        clickCard(5, Qt::ControlModifier);
+        QCOMPARE(checked(), (QStringList{"m1", "m3", "m5"}));
+        clickCard(3, Qt::ControlModifier); // Ctrl+clic sur un message coché : le décoche
+        QCOMPARE(checked(), (QStringList{"m1", "m5"}));
+        QTest::qWait(200);
+        QCOMPARE(view->message().id, QString("m1"));
+        // Maj+clic : toute la plage depuis le dernier message cliqué
+        clickCard(7, Qt::ShiftModifier);
+        QCOMPARE(checked(), (QStringList{"m1", "m3", "m4", "m5", "m6", "m7"})); // de m3 (dernier cliqué) à m7
+        QTest::keyClick(&win, Qt::Key_Escape);
+        QVERIFY(checked().isEmpty());
+        // Maj+clic sans rien de coché : du message ouvert jusqu'au message cliqué
+        clickCard(4, Qt::ShiftModifier);
+        QCOMPARE(checked(), (QStringList{"m1", "m2", "m3", "m4"}));
 
         GmailApi::setBaseUrlForTesting("https://gmail.googleapis.com/gmail/v1/users/me/");
         GoogleAuth::setAccessTokenForTesting({});

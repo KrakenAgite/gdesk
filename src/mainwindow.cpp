@@ -440,6 +440,16 @@ QWidget *MainWindow::buildMailPage()
     m_list->viewport()->setBackgroundRole(QPalette::Window); // les cartes se détachent du fond
     m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_list->setMinimumWidth(260);
+    m_emptyLabel = new QLabel(m_list->viewport());
+    m_emptyLabel->setObjectName("emptyListLabel");
+    m_emptyLabel->setAlignment(Qt::AlignCenter);
+    m_emptyLabel->setWordWrap(true);
+    m_emptyLabel->setEnabled(false); // texte grisé
+    m_emptyLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_emptyLabel->hide();
+    m_list->viewport()->installEventFilter(this); // recentre le message quand la liste change de taille
+    connect(m_list->model(), &QAbstractItemModel::rowsInserted, this, &MainWindow::updateEmptyState);
+    connect(m_list->model(), &QAbstractItemModel::rowsRemoved, this, &MainWindow::updateEmptyState);
     m_listDelegate = new MailListDelegate(m_list);
     m_list->setItemDelegate(m_listDelegate);
     connect(m_list, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onSelectionChanged);
@@ -998,6 +1008,8 @@ void MainWindow::reloadList(const QString &keepSelected)
     ++m_generation;
     m_nextPageToken.clear();
     m_loadingList = false;
+    m_listError.clear();
+    m_metaQueue.clear(); // détails du dossier précédent : plus utiles
     {
         QSignalBlocker b(m_list);
         m_list->clear();
@@ -1018,12 +1030,15 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
 {
     m_loadingList = true;
     statusBar()->showMessage("Chargement…");
-    m_api->listMessages(currentListLabels(), m_query, m_nextPageToken, 50,
+    updateEmptyState();
+    m_api->listMessages(currentListLabels(), m_query, m_nextPageToken, PageSize,
                         [this, generation, keepSelected](const QJsonObject &obj, const QString &err) {
         if (generation != m_generation)
             return;
         m_loadingList = false;
         if (!err.isEmpty()) {
+            m_listError = err;
+            updateEmptyState();
             showError("Impossible de charger les messages", err);
             return;
         }
@@ -1054,7 +1069,42 @@ void MainWindow::fetchPage(int generation, const QString &keepSelected)
         if (selectAllAfter)
             checkWhere([](const QStringList &) { return true; });
         updateSelectionBar();
+        updateEmptyState();
+        // Lot suivant tout de suite si la liste ne remplit pas encore la hauteur (grand écran)
+        QTimer::singleShot(0, this, [this, generation] {
+            if (generation == m_generation && !m_loadingList && !m_nextPageToken.isEmpty() && m_list->isVisible()
+                && m_list->verticalScrollBar()->maximum() == 0)
+                fetchPage(generation, {});
+        });
     });
+}
+
+// Liste vide : message au centre plutôt qu'une zone blanche
+void MainWindow::updateEmptyState()
+{
+    const bool empty = m_list->topLevelItemCount() == 0;
+    m_emptyLabel->setVisible(empty);
+    if (!empty)
+        return;
+    QString title, detail;
+    if (!m_listError.isEmpty()) {
+        title = "Impossible de charger les messages";
+        detail = m_listError;
+    } else if (m_loadingList) {
+        title = "Chargement…";
+    } else if (!m_query.isEmpty()) {
+        title = "Aucun résultat";
+        detail = QString("Aucun message ne correspond à « %1 ».").arg(m_query);
+    } else {
+        const QString name = m_currentLabel.isEmpty() ? QString("Tous les messages") : folderName(m_currentLabel);
+        title = QString("Aucun message dans « %1 »").arg(name);
+        detail = m_currentLabel == "INBOX" ? QString("Votre boîte de réception est vide.")
+               : m_currentLabel == "TRASH" || m_currentLabel == "SPAM" ? QString("Cette boîte est vide.")
+                                                                       : QString();
+    }
+    m_emptyLabel->setText(QString("<p style='font-size:large'><b>%1</b></p>%2")
+                              .arg(title.toHtmlEscaped(), detail.toHtmlEscaped()));
+    m_emptyLabel->setGeometry(m_list->viewport()->rect().adjusted(24, 0, -24, 0));
 }
 
 QStringList MainWindow::currentListLabels() const
@@ -1062,14 +1112,28 @@ QStringList MainWindow::currentListLabels() const
     return (!m_query.isEmpty() || m_currentLabel.isEmpty()) ? QStringList() : QStringList{m_currentLabel};
 }
 
+// Détails des lignes demandés par petits lots, dans l'ordre de la liste (et non tous d'un coup)
 void MainWindow::loadRowMetadata(const QString &id, int generation)
 {
-    m_api->getMessage(id, false, [this, generation, id](const QJsonObject &o, const QString &e) {
-        if (generation != m_generation || !e.isEmpty())
-            return;
-        if (QTreeWidgetItem *it = m_rows.value(id))
-            fillRow(it, Mime::parseMessage(o));
-    });
+    m_metaQueue.append({id, generation});
+    pumpMetadata();
+}
+
+void MainWindow::pumpMetadata()
+{
+    while (m_metaInFlight < MetadataParallel && !m_metaQueue.isEmpty()) {
+        const auto [id, generation] = m_metaQueue.takeFirst();
+        if (generation != m_generation || !m_rows.contains(id))
+            continue;
+        m_metaPeak = qMax(m_metaPeak, ++m_metaInFlight);
+        m_api->getMessage(id, false, [this, generation, id](const QJsonObject &o, const QString &e) {
+            --m_metaInFlight;
+            if (generation == m_generation && e.isEmpty())
+                if (QTreeWidgetItem *it = m_rows.value(id))
+                    fillRow(it, Mime::parseMessage(o));
+            pumpMetadata();
+        });
+    }
 }
 
 // Nouveaux messages : on les insère en haut de la liste au lieu de tout recharger
@@ -1487,6 +1551,13 @@ void MainWindow::onCheckClicked(const QModelIndex &index, Qt::KeyboardModifiers 
         return;
     const int row = index.row();
     const bool on = !item->data(0, MailRoles::Checked).toBool();
+    // Ctrl ou Maj+clic sur une carte alors que rien n'est coché : le message ouvert fait partie
+    // de la sélection (point de départ de la plage), comme dans un gestionnaire de fichiers
+    if ((modifiers & Qt::KeypadModifier) && m_checked.isEmpty())
+        if (QTreeWidgetItem *open = m_rows.value(m_openId); open && open != item) {
+            setChecked(open, true);
+            m_lastCheckedRow = m_list->indexOfTopLevelItem(open);
+        }
     if ((modifiers & Qt::ShiftModifier) && m_lastCheckedRow >= 0 && m_lastCheckedRow < m_list->topLevelItemCount()) {
         // Maj+clic : toute la plage depuis la dernière case cliquée
         for (int r = qMin(row, m_lastCheckedRow); r <= qMax(row, m_lastCheckedRow); ++r)
@@ -1563,7 +1634,10 @@ void MainWindow::markTargets(bool read)
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     // Liste étroite (aperçu à droite) : boutons de la barre de sélection en icônes seules
-    if (event->type() == QEvent::Resize && watched->isWidgetType()) {
+    if (event->type() == QEvent::Resize && m_list && watched == m_list->viewport()) {
+        if (m_emptyLabel->isVisible())
+            m_emptyLabel->setGeometry(m_list->viewport()->rect().adjusted(24, 0, -24, 0));
+    } else if (event->type() == QEvent::Resize && watched->isWidgetType()) {
         const bool narrow = static_cast<QWidget *>(watched)->width() < 620;
         for (QToolButton *b : std::as_const(m_selectionButtons))
             b->setToolButtonStyle(narrow ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);

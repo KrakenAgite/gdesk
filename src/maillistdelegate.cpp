@@ -118,6 +118,15 @@ bool MailListDelegate::eventFilter(QObject *watched, QEvent *event)
     const bool onCheck = checkRect(opt.rect).adjusted(-6, -8, 6, 8).contains(pos);
     const bool onStar = !index.data(MailRoles::Subject).toString().isEmpty()
                         && starRect(opt).adjusted(-5, -5, 5, 5).contains(pos);
+    // Ctrl+clic (un par un) ou Maj+clic (plage) sur une carte : cocher, comme dans un gestionnaire de fichiers
+    const bool modifierClick = !onCheck && !onStar
+                               && (me->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))
+                               && !index.data(MailRoles::Id).toString().isEmpty();
+    if (modifierClick) {
+        if (t == QEvent::MouseButtonPress)
+            emit checkClicked(index, me->modifiers() | Qt::KeypadModifier); // Keypad : clic sur la carte
+        return true;
+    }
     if (!onCheck && !onStar)
         return false;
     if (t == QEvent::MouseButtonRelease) {

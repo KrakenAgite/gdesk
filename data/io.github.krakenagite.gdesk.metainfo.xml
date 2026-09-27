@@ -50,6 +50,12 @@
     <mediatype>x-scheme-handler/mailto</mediatype>
   </provides>
   <releases>
+    <release version="2.5.1" date="2026-09-27">
+      <description>
+        <p>Select messages with Ctrl+click (one by one) and Shift+click (range), like in a file manager.</p>
+        <p>The message list loads in batches of 25 and fetches details a few at a time; an empty folder now shows a clear message instead of a blank list.</p>
+      </description>
+    </release>
     <release version="2.5.0" date="2026-09-26">
       <description>
         <p>Unsubscribe from newsletters: G-Desk lists the mailing lists found in received messages with checkboxes and unsubscribes from the checked ones (one-click, by e-mail or through the sender's web page).</p>

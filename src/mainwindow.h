@@ -39,6 +39,7 @@ public:
     MainWindow();
 
     // Recherche Gmail des non-lus comptés dans la pastille (vide si aucune boîte)
+    int metadataPeak() const { return m_metaPeak; } // plus grand nombre de détails demandés à la fois (tests)
     static QString badgeQuery(const QStringList &folders, const QMap<QString, QString> &labelNames);
     void composeMailto(const QUrl &mailto);
     void bringToFront();
@@ -142,6 +143,8 @@ private:
     void notify(const QString &title, const QString &text);
     void setUnread(int count);
     void refreshBadge();
+    void updateEmptyState();
+    void pumpMetadata();
     QIcon badgeIcon(int count) const;
     void updateLauncherBadge(int count);
     void about();
@@ -188,6 +191,12 @@ private:
     QStringList m_notifyFolders;      // boîtes dont les nouveaux messages sont notifiés
     QStringList m_badgeFolders{"INBOX"}; // boîtes comptées dans la pastille de non-lus
     int m_badgeGeneration = 0;
+    static constexpr int PageSize = 25;        // messages par lot (la suite au défilement)
+    static constexpr int MetadataParallel = 5; // détails demandés en même temps
+    QList<QPair<QString, int>> m_metaQueue;    // (message, génération de la liste) en attente
+    int m_metaInFlight = 0, m_metaPeak = 0;
+    QLabel *m_emptyLabel = nullptr;            // « Aucun message dans… » sur la liste vide
+    QString m_listError;
     QString m_notifyFolder = "INBOX"; // boîte ouverte au clic sur la dernière notification
     int m_pollGeneration = 0;
     bool m_bulkBusy = false;
